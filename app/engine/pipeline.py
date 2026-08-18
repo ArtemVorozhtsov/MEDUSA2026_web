@@ -40,7 +40,7 @@ from mass_automation.utils import ELEMENT_DICT
 
 from ..errors import PipelineError
 from ..state import Session
-from .downsample import DEFAULT_MAX_PTS, downsample_window
+from .downsample import DEFAULT_MAX_PTS, downsample_window, uniform_window
 
 logger = logging.getLogger("medusa_web.pipeline")
 
@@ -384,9 +384,12 @@ def knee(store, session_id: str, element_symbol: str) -> Dict[str, Any]:
         if values.size == 0:
             raise PipelineError("no classified ions available for knee detection", 400)
         threshold, knee_idx = find_knee_threshold_numpy(values)
+        # Plot (like notebook plot_knee) shows probabilities sorted descending;
+        # knee_idx is the position in this sorted array.
+        sorted_values = np.sort(values)[::-1]
         result = {
             "element": element_symbol,
-            "probs": [float(v) for v in values],
+            "probs": [float(v) for v in sorted_values],
             "threshold": float(threshold),
             "knee_idx": int(knee_idx),
             "n_ions": int(values.size),
@@ -592,60 +595,66 @@ def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: int 
 
     x_left = int(round(float(theo_masses[0]) - 1))
     x_right = int(round(float(theo_masses[-1]) + 1))
-    window = downsample_window(session.masses, session.ints, x_left, x_right, max_pts)
+    # Shape-preserving (uniform-stride) window: relative intensities of the
+    # isotopic cluster must match the real spectrum (peak-preserving decimation
+    # would distort them).
+    window = uniform_window(session.masses, session.ints, x_left, x_right, max_pts)
 
     fig = make_subplots(
         rows=2, cols=1,
-        subplot_titles=(f"Experimental  (ion {ion_id}, m/z {ion['mz']:.4f}, z={target_charge:g})",
+        subplot_titles=(f"Experimental  (ion {ion_id}, base peak m/z {ion['mz']:.4f}, z={target_charge:g})",
                         f"Calculated  {formula.str_formula}"),
         vertical_spacing=0.12,
     )
+    # --- row 1: experimental cluster ------------------------------------ #
     fig.add_trace(
         go.Scatter(x=window["masses"].tolist(), y=window["ints"].tolist(),
-                   mode="lines", name="Experimental", line=dict(color="#222222", width=1)),
+                   mode="lines", name="Experimental", line=dict(color="#222222", width=1),
+                   hovertemplate="m/z %{x:.4f}<br>I %{y:.3g}<extra></extra>"),
         row=1, col=1,
     )
     fig.add_trace(
         go.Scatter(x=real_masses.tolist(), y=real_ints.tolist(), mode="markers",
-                   name="Matched peaks", marker=dict(color="orange", size=7, line=dict(color="black", width=0.5))),
+                   name="Matched peaks", marker=dict(color="orange", size=7, line=dict(color="black", width=0.5)),
+                   hovertemplate="matched peak m/z %{x:.4f}<br>I %{y:.3g}<extra></extra>"),
         row=1, col=1,
     )
-    # vertical lines (plotly 5.x has no go.Vline): open line-ns markers spanning the row
+    # --- row 2: calculated isotope pattern (same line style as row 1) --- #
+    for i, (tm, ti) in enumerate(zip(theo_masses.tolist(), theo_ints.tolist())):
+        fig.add_trace(
+            go.Scatter(x=[tm, tm], y=[0.0, ti], mode="lines",
+                       name="Isotopic pattern", showlegend=(i == 0),
+                       line=dict(color="#222222", width=1),
+                       hovertemplate=f"m/z %{{x:.4f}}<br>rel. intensity {ti:.3f}<extra></extra>"),
+            row=2, col=1,
+        )
+    # m/z labels above each isotope peak (as in notebook plot_compare)
     fig.add_trace(
-        go.Scatter(x=theo_masses.tolist(), y=[1.0] * len(theo_masses), mode="markers",
-                   marker=dict(symbol="line-ns-open", size=16, color="#0055aa",
-                               line=dict(width=2)),
-                   name="Isotopic pattern", hoverinfo="skip", showlegend=True),
+        go.Scatter(x=theo_masses.tolist(), y=theo_ints.tolist(), mode="text",
+                   text=[f"{m:.3f}" for m in theo_masses.tolist()],
+                   textposition="top center",
+                   showlegend=False, hoverinfo="skip",
+                   textfont=dict(size=10)),
         row=2, col=1,
     )
-    fig.add_trace(
-        go.Scatter(x=theo_masses.tolist(), y=theo_ints.tolist(), mode="lines",
-                   name="rel. intensity", line=dict(color="#0055aa", width=1, dash="dot"),
-                   hoverinfo="skip"),
-        row=2, col=1,
+    # --- metrics block: boxed, top-right, does not cover the data ------ #
+    metrics = (
+        f"&Delta; = {mass_delta:.2f} ppm<br>"
+        f"Cos. dist. = {cosine_dist:.1e}<br>"
+        f"Matched peaks = {matched_pct * 100:.1f} %"
     )
-    fig.add_trace(
-        go.Scatter(x=theo_masses.tolist(), y=theo_ints.tolist(), mode="markers",
-                   name="Isotope m/z", marker=dict(color="#0055aa", size=6),
-                   text=[f"{m:.4f}" for m in theo_masses.tolist()],
-                   hovertemplate="<b>m/z %{x:.4f}</b><br>rel. intensity %{y:.3f}<extra></extra>"),
-        row=2, col=1,
-    )
-
-    y_max = float(np.max(window["ints"])) if len(window["ints"]) else 1.0
-    annotations = [
-        dict(text=f"<b>&Delta; = {mass_delta:.2f} ppm</b>", x=x_right, y=0.5 * y_max,
-             xref="x1", yref="y1", showarrow=False, xanchor="right"),
-        dict(text=f"<b>Cos. dist. = {cosine_dist:.1e}</b>", x=x_right, y=0.62 * y_max,
-             xref="x1", yref="y1", showarrow=False, xanchor="right"),
-        dict(text=f"<b>Matched peaks = {matched_pct * 100:.1f} %</b>", x=x_right, y=0.74 * y_max,
-             xref="x1", yref="y1", showarrow=False, xanchor="right"),
+    # append (keep the subplot titles); direct assignment replaces the list —
+    # update_layout(annotations=[...]) would merge element-wise and corrupt it
+    fig.layout.annotations = list(fig.layout.annotations) + [
+        dict(text=metrics, x=0.995, y=0.99, xref="paper", yref="paper",
+             xanchor="right", yanchor="top", showarrow=False, align="left",
+             bordercolor="#999999", borderwidth=1, borderpad=6,
+             bgcolor="rgba(255,255,255,0.92)", font=dict(size=12)),
     ]
-    fig.update_layout(annotations=annotations)
     fig.update_xaxes(range=[x_left, x_right], row=1, col=1)
     fig.update_xaxes(range=[x_left, x_right], row=2, col=1)
     fig.update_yaxes(title_text="Intensity", row=1, col=1)
-    fig.update_yaxes(title_text="Relative intensity", range=[0, 1.1], row=2, col=1)
+    fig.update_yaxes(title_text="Relative intensity", range=[0, 1.15], row=2, col=1)
     fig.update_layout(
         template="plotly_white",
         height=680,

@@ -56,6 +56,7 @@ def spectrum_window(
         "n_in_window": window["n_in_window"],
         "max_pts": max_pts,
         "full_range": window["full_range"],
+        "window_range": [float(x0), float(x1)],
     }
     if "ion_id" in window:
         out["ion_id"] = [int(v) for v in window["ion_id"]]

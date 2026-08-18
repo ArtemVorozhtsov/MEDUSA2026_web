@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app.engine.downsample import HARD_MAX_PTS, clamp_max_pts, downsample_window
+from app.engine.downsample import HARD_MAX_PTS, clamp_max_pts, downsample_window, uniform_window
 
 
 def _check_properties(out, window_masses, window_ints, max_pts, full_masses):
@@ -111,3 +111,48 @@ def test_invalid_range():
     ints = np.ones(100)
     with pytest.raises(ValueError):
         downsample_window(masses, ints, 150, 150, max_pts=10)
+
+
+# ---------------------------------------------------------------------- #
+# uniform_window (shape-preserving, used by the compare figure)
+# ---------------------------------------------------------------------- #
+def _iso_like(masses):
+    """A few gaussian 'isotope' peaks on a fine grid."""
+    rng = np.random.default_rng(11)
+    ints = np.full(masses.size, 1e3)
+    for center, h, rel in ((405.0, 0.08, 1.0), (406.1, 0.09, 0.55), (407.2, 0.1, 0.21), (408.3, 0.1, 0.06)):
+        ints += rel * h * 1e6 * np.exp(-0.5 * ((masses - center) / 0.03) ** 2)
+    return ints + rng.normal(0, 2e3, masses.size).clip(min=0)
+
+
+def test_uniform_window_exact_when_fits():
+    masses = np.linspace(100, 200, 1200)
+    ints = _iso_like(masses)
+    out = uniform_window(masses, ints, 100, 200, max_pts=2500)
+    assert out["decimated"] is False
+    assert len(out["masses"]) == 1200
+    assert out["masses"].tolist() == masses.tolist()
+
+
+@pytest.mark.parametrize("max_pts", [2500, 500, 100])
+def test_uniform_window_shape_preserving(max_pts):
+    masses = np.linspace(400, 412, 30_000)
+    ints = _iso_like(masses)
+    out = uniform_window(masses, ints, 400, 412, max_pts=max_pts)
+    m, i = out["masses"], out["ints"]
+    assert out["decimated"] is True
+    assert len(m) <= max_pts
+    assert np.all(np.diff(m) > 0), "not strictly increasing"
+    # window maximum is always kept (relative intensities anchored)
+    assert max(i) == ints.max()
+    assert m[np.argmax(i)] == masses[np.argmax(ints)]
+    # returned points are exact original points (no interpolation)
+    for v in m[:20]:
+        assert v in set(masses.tolist())
+    # no missing chunks: the argmax-insertion may create at most two locally
+    # enlarged gaps (~2x base); everything else sits on the uniform stride
+    gaps = np.diff(m)
+    base = np.median(gaps)
+    assert gaps.max() <= base * 2.05 + 1e-9, "a chunk of the window was dropped"
+    assert (gaps > base * 1.05).sum() <= 2
+    assert (np.abs(gaps - base) <= 0.05 * base).mean() >= 0.9

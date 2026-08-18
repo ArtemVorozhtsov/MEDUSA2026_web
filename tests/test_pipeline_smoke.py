@@ -16,6 +16,7 @@ from app.engine.pipeline import (
     _classify_all_ions,
     classify_elements,
     deisotope,
+    compare,
     formulas,
     knee,
 )
@@ -214,3 +215,39 @@ def test_empty_peak_indices_guard(models):
     # session still usable: knee works on the remaining ions
     r = knee(store, sess.id, "Ir")
     assert r["n_ions"] == 1
+
+
+def test_compare_figure(full_run, small_spectrum):
+    """Compare figure: experimental window keeps true relative intensities,
+    point count is bounded, and the metrics (incl. delta) are annotated."""
+    store, sess = full_run["store"], full_run["sess"]
+    best_ion = full_run["best_ion"]
+    formula_str = full_run["formulas"]["ranked"][0]["formula"]
+
+    fig = compare(store, sess.id, best_ion, formula_str, max_pts=2500)
+    data = fig["data"]
+    assert len(data) >= 3
+
+    exp = data[0]  # experimental trace, row 1
+    assert len(exp["x"]) <= 2500
+    masses, ints = small_spectrum
+    x0, x1 = min(exp["x"]), max(exp["x"])
+    mask = (masses >= x0 - 1e-9) & (masses <= x1 + 1e-9)
+    assert max(exp["y"]) == pytest.approx(float(ints[mask].max())), \
+        "experimental max intensity must match the true window (no distortion)"
+    # the returned max-intensity point is the true window argmax
+    assert exp["x"][int(np.argmax(exp["y"]))] == pytest.approx(
+        float(masses[mask][np.argmax(ints[mask])]))
+
+    # metrics block with delta (item: delta on the plot)
+    annotations = fig["layout"].get("annotations") or []
+    joined = " ".join(a.get("text", "") for a in annotations)
+    assert "ppm" in joined and "Cos. dist." in joined and "Matched" in joined
+
+
+def test_knee_probs_sorted_desc(full_run):
+    """knee() must return probabilities sorted descending (chart contract);
+    knee_idx is the position in the sorted array."""
+    r = full_run["knee"]
+    assert r["probs"] == sorted(r["probs"], reverse=True)
+    assert r["threshold"] == pytest.approx(r["probs"][r["knee_idx"]])

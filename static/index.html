@@ -20,6 +20,41 @@
   <!-- ============ LEFT: pipeline steps ============ -->
   <section id="left-col">
 
+    <div class="step" id="step-help">
+      <div class="step-head"><span class="step-num">?</span> Help</div>
+      <details id="help-details">
+        <summary>How to use</summary>
+        <div class="help-body">
+          <p>The MEDUSA 2026 pipeline in 7 steps, on a single FT-ICR scan.</p>
+          <ol>
+            <li><b>Load</b> — pick an mzXML from the server folder or upload your own
+               (only the first scan of the file is used).</li>
+            <li><b>Deisotoping</b> — groups peaks into isotopic distributions and predicts
+               the charge of every ion. Turn on <i>ions on spectrum</i> to mark each ion's
+               peak top with a colored dot; click a dot, a peak, or a legend entry to select
+               the ion (auto-zoom to its window). The base (highest) peak of the ion is shown
+               in its annotation.</li>
+            <li><b>Element classification</b> — the Transformer estimates, for each ion, the
+               probability that the selected element (default Ir) is present in the molecule.</li>
+            <li><b>Threshold</b> — the "knee" of the probability distribution (sorted
+               descending) gives an automatic threshold; the slider overrides it manually.</li>
+            <li><b>Highlight</b> — <i>Apply threshold</i> marks the points of ions with
+               P above the threshold in red; <i>Zoom to highlighted ions</i> jumps to that region.</li>
+            <li><b>Molecular formula</b> — select the ion (table or peak), set element limits
+               (or pick a preset) and the mass tolerance (ppm), press Run. The ranked table is
+               sorted by cosine similarity; <i>CSV</i> exports it, clicking a row sends the
+               formula to step 7.</li>
+            <li><b>Compare with spectrum</b> — overlays the calculated isotopic pattern of the
+               chosen formula on the experimental window: Δ (ppm), cosine distance and matched
+               peaks % are shown in the top-right box.</li>
+          </ol>
+          <p class="muted">Zoom: drag a rectangle or use the mouse wheel. Warnings (e.g. skipped
+          ions) appear in the Log. <i>New session</i> clears all results. A 409
+          "job slot busy" means another heavy step is running — wait a few seconds and press Run again.</p>
+        </div>
+      </details>
+    </div>
+
     <div class="step" id="step-load">
       <div class="step-head"><span class="step-num">1</span> Load spectrum
         <span class="spinner" data-spin="load" hidden></span></div>

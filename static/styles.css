@@ -48,7 +48,7 @@ body {
   min-height: 0;
 }
 #left-col, #right-col { overflow-y: auto; min-height: 0; padding-right: 2px; }
-#center-col { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+#center-col { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; }
 
 /* ---------- steps ---------- */
 .step {
@@ -126,6 +126,12 @@ body {
 .btn.tiny { padding: 2px 8px; font-size: 11px; float: right; }
 #new-session-btn { margin-left: auto; }
 
+/* help */
+.help-body { font-size: 12.5px; line-height: 1.5; margin-top: 6px; color: var(--text); }
+.help-body ol { margin: 6px 0; padding-left: 18px; }
+.help-body li { margin-bottom: 4px; }
+#help-details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+
 /* ions legend */
 .ion-legend { list-style: none; margin: 6px 0 0; padding: 0; max-height: 180px; overflow-y: auto; }
 .ion-legend li {
@@ -144,7 +150,7 @@ body {
 .limits-table input {
   width: 100%; padding: 3px 5px; border: 1px solid var(--border); border-radius: 4px; font-size: 12.5px;
 }
-.limits-table input.sym { width: 4.5em; text-transform: uppercase; }
+.limits-table input.sym { width: 4.5em; }
 .limits-table .rm { cursor: pointer; color: var(--danger); border: none; background: none; font-size: 14px; }
 #f-preset { width: auto; }
 
@@ -158,7 +164,7 @@ body {
   flex: 1; min-height: 380px; background: var(--panel);
   border: 1px solid var(--border); border-radius: 8px;
 }
-#compare-plot { flex: 1; min-height: 300px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+#compare-plot { flex: 0 0 auto; min-height: 560px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
 .plot { width: 100%; }
 .plot.small { height: 220px; }
 

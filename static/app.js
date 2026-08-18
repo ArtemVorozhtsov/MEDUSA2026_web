@@ -61,8 +61,8 @@ async function api(path, options = {}) {
 }
 
 function renderLogs(logs) {
-  if (!logs || !logs.length) return;
   const area = $("#log-area");
+  if (!logs || !logs.length) { area.innerHTML = ""; return; }
   const lines = logs.map((l) =>
     `<div class="${l.level}">${new Date(l.ts * 1000).toISOString().slice(11, 19)}  ${escapeHtml(l.message)}</div>`
   ).join("");
@@ -193,6 +193,8 @@ async function onSessionCreated(data) {
 function resetDownstreamState() {
   S.ions = []; S.ionProbs = {}; S.selectedIon = null; S.threshold = null;
   S.knee = null; S.ranked = null; S.window = null;
+  currentRange = null;
+  renderLogs([]);
   $("#deiso-summary").hidden = true;
   $("#ion-legend").hidden = true;
   $("#ions-toggle").checked = false;
@@ -227,7 +229,8 @@ function windowStatusText() {
   if (!w) return "load a spectrum to start";
   const parts = [`${w.n_in_window.toLocaleString()} pts in window`];
   if (w.decimated) parts.push(`decimated ≤ ${w.max_pts}`);
-  parts.push(`m/z ${w.x0.toFixed(2)}–${w.x1.toFixed(2)}`);
+  const [wx0, wx1] = w.window_range || currentRange || [];
+  if (wx0 !== undefined && wx1 !== undefined) parts.push(`m/z ${wx0.toFixed(2)}–${wx1.toFixed(2)}`);
   return parts.join(" · ");
 }
 
@@ -252,33 +255,48 @@ async function refreshWindow(x0, x1) {
 function renderSpectrum() {
   const w = S.window;
   if (!w) return;
-  const traces = [];
 
-  if (S.ions.length && $("#layer-ions").checked) {
-    // per-ion coloring (categorical palette, cycling)
+  // ion layer requested but the current window has no assignments: refetch
+  if (S.ions.length && $("#layer-ions").checked && !w.ion_id && currentRange) {
+    refreshWindow(currentRange[0], currentRange[1]);
+    return;
+  }
+
+  const traces = [];
+  const ionsLayerOn = S.ions.length > 0 && $("#layer-ions").checked && w.ion_id;
+
+  // raw spectrum — always shown, deisotoping never changes its rendering;
+  // the hover annotation carries the ion index when deisotoping is done
+  traces.push({
+    x: w.masses, y: w.ints, mode: "lines", name: "raw",
+    line: { color: "#2e6fb7", width: 1 },
+    customdata: Array.isArray(w.ion_id)
+      ? w.ion_id.map((id) => (id >= 0 ? `ion ${id}` : "noise")) : undefined,
+    hovertemplate: Array.isArray(w.ion_id)
+      ? "m/z %{x:.4f}<br>I %{y:.3g}<br>%{customdata}<extra></extra>"
+      : "m/z %{x:.4f}<br>I %{y:.3g}<extra></extra>",
+  });
+
+  if (ionsLayerOn) {
+    // one colored dot at each ion's strongest point (peak top) in the window;
+    // the legend/annotation always names the ion by its base (argmax) peak
     const byIon = new Map();
     for (let i = 0; i < w.masses.length; i++) {
-      const id = w.ion_id ? w.ion_id[i] : -1;
+      const id = w.ion_id[i];
       if (id < 0) continue;
-      if (!byIon.has(id)) byIon.set(id, [[], []]);
-      byIon.get(id)[0].push(w.masses[i]);
-      byIon.get(id)[1].push(w.ints[i]);
+      const cur = byIon.get(id);
+      if (cur === undefined || w.ints[i] > w.ints[cur]) byIon.set(id, i);
     }
-    byIon.forEach(([xs, ys], id) => {
+    byIon.forEach((i, id) => {
       const ion = S.ions[id];
       const name = ion ? `ion ${id} · m/z ${ion.mz.toFixed(3)} · z=${ion.charge}` : `ion ${id}`;
       traces.push({
-        x: xs, y: ys, mode: "lines", name,
-        line: { color: ionColor(id), width: 1 },
-        hovertemplate: `<b>${name}</b><br>m/z %{x:.4f}<br>I %{y:.3g}<extra></extra>`,
+        x: [w.masses[i]], y: [w.ints[i]], mode: "markers", name,
+        marker: { color: ionColor(id), size: 7, line: { color: "#ffffff", width: 1 } },
+        hovertemplate: `<b>${name}</b><br>point m/z %{x:.4f}<br>I %{y:.3g}<br>` +
+          `base (argmax) peak m/z ${ion ? ion.mz.toFixed(4) : "?"}<extra></extra>`,
         "medusa-ion": id,
       });
-    });
-  } else {
-    traces.push({
-      x: w.masses, y: w.ints, mode: "lines", name: "raw",
-      line: { color: "#2e6fb7", width: 1 },
-      hovertemplate: "m/z %{x:.4f}<br>I %{y:.3g}<extra></extra>",
     });
   }
 
@@ -305,7 +323,7 @@ function renderSpectrum() {
     xaxis: { title: "m/z", range: currentRange },
     yaxis: { title: "Intensity" },
     dragmode: "zoom",
-    showlegend: S.ions.length > 0,
+    showlegend: traces.length > 1,
     legend: { orientation: "h", y: -0.18, font: { size: 10 } },
     height: $("#spectrum-plot").clientHeight || 420,
   };
@@ -502,7 +520,7 @@ function renderKneePlot() {
   if (!k) return;
   const x = k.probs.map((_, i) => i);
   const traces = [
-    { x, y: k.probs, mode: "lines+markers", name: "sorted P",
+    { x, y: k.probs, mode: "lines+markers", name: "P (sorted desc)",
       line: { color: "#2e6fb7" }, marker: { size: 4 } },
     { x: [0, k.probs.length - 1], y: [k.threshold, k.threshold], mode: "lines",
       name: `threshold ${k.threshold.toExponential(1)}`,
@@ -514,7 +532,7 @@ function renderKneePlot() {
   const layout = {
     margin: { l: 55, r: 15, t: 25, b: 35 },
     yaxis: { type: "log", title: "P (log)" },
-    xaxis: { title: "ion idx (sorted)" },
+    xaxis: { title: "ion rank (sorted by P, descending)" },
     showlegend: false,
     height: 220,
   };
@@ -667,7 +685,8 @@ async function runCompare() {
       el.hidden = false;
       $("#compare-status").textContent =
         `comparing ${formula} with ion ${ionId} (charge ${S.ions[ionId] ? S.ions[ionId].charge : "?"})`;
-      const layout2 = Object.assign({}, fig.layout, { height: el.clientHeight || 480 });
+      const layout2 = Object.assign({}, fig.layout,
+        { height: Math.max(el.clientHeight || 0, 560) });
       if (el.data && el.data.length) Plotly.react(el, fig.data, layout2, { responsive: true });
       else Plotly.newPlot(el, fig.data, layout2, { responsive: true });
     } catch (err) {

@@ -128,3 +128,46 @@ def _first_extremum(ints: np.ndarray, bin_idx: np.ndarray, bin_val: np.ndarray, 
 
 def _empty_aux(aux: Optional[Dict[str, np.ndarray]]) -> Dict[str, list]:
     return {name: [] for name in (aux or {})}
+
+
+def uniform_window(
+    masses: np.ndarray,
+    ints: np.ndarray,
+    x0: float,
+    x1: float,
+    max_pts: int = DEFAULT_MAX_PTS,
+):
+    """Shape-preserving window for the compare figure.
+
+    Unlike :func:`downsample_window` (peak-preserving, biased to high-intensity
+    points), this keeps every N-th point so the *relative* intensities of the
+    isotopic cluster match the real spectrum. The window maximum is always
+    kept. Returns ``{"masses", "ints", "n_in_window", "decimated"}``.
+    """
+    max_pts = clamp_max_pts(max_pts)
+    if x1 <= x0:
+        raise ValueError("x1 must be greater than x0")
+
+    lo, hi = window_slice(masses, x0, x1)
+    window_masses = masses[lo:hi]
+    window_ints = ints[lo:hi]
+
+    if window_masses.size <= max_pts:
+        return {
+            "masses": window_masses, "ints": window_ints,
+            "n_in_window": int(window_masses.size), "decimated": False,
+        }
+    step = int(np.ceil(window_masses.size / max_pts))
+    sel = np.arange(0, window_masses.size, step)
+    argmax = int(np.argmax(window_ints))
+    sel = np.unique(np.concatenate([sel, [argmax]]))
+    if sel.size > max_pts:
+        # keep the bound exact: drop the sampled point nearest to the argmax
+        keep = [i for i in sel if i != argmax]
+        nearest = min(keep, key=lambda i: abs(int(i) - argmax))
+        sel = sel[sel != nearest]
+    sel.sort()
+    return {
+        "masses": window_masses[sel], "ints": window_ints[sel],
+        "n_in_window": int(window_masses.size), "decimated": True,
+    }
