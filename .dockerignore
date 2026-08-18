@@ -1,0 +1,28 @@
+# Build context is the PARENT of medusa_web/ (contains medusa_web/ + MEDUSA2026/).
+# Keep only what the image actually needs; exclude everything else (the repo has
+# a 4 GB .venv, 107 MB spectra, notebooks, etc.).
+
+/*
+!medusa_web
+!MEDUSA2026
+
+# --- medusa_web: exclude caches ---
+medusa_web/**/__pycache__
+medusa_web/**/.pytest_cache
+medusa_web/.git
+
+# --- MEDUSA2026: keep only mass_automation + the two model files ---
+MEDUSA2026/*
+!MEDUSA2026/mass_automation
+!MEDUSA2026/data
+!MEDUSA2026/nn_models
+
+MEDUSA2026/mass_automation/**/__pycache__
+
+MEDUSA2026/data/*
+!MEDUSA2026/data/models
+MEDUSA2026/data/models/*
+!MEDUSA2026/data/models/charge1_big_optuna150.pkl
+
+MEDUSA2026/nn_models/*
+!MEDUSA2026/nn_models/transfomer_classifier.ckpt

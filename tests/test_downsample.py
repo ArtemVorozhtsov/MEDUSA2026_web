@@ -1,0 +1,113 @@
+"""Properties of peak-preserving windowed decimation (task spec section 7)."""
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from app.engine.downsample import HARD_MAX_PTS, clamp_max_pts, downsample_window
+
+
+def _check_properties(out, window_masses, window_ints, max_pts, full_masses):
+    m, i = out["masses"], out["ints"]
+    assert len(m) <= max_pts, f"{len(m)} > {max_pts}"
+    if len(m) > 1:
+        assert np.all(np.diff(np.asarray(m)) > 0), "m/z not strictly increasing"
+    # global maximum of the window is always present
+    global_max_pos = int(np.argmax(window_ints))
+    assert m[np.argmax(i)] == window_masses[global_max_pos] or \
+        max(i) == max(window_ints), "global window maximum lost"
+    # endpoints within one bin width
+    if len(m) and window_masses.size > max_pts:
+        bin_width = (window_masses[-1] - window_masses[0]) / max(1, (max_pts - max(1, max_pts // 2)) // 2)
+        assert m[0] - window_masses[0] <= bin_width + 1e-9
+        assert window_masses[-1] - m[-1] <= bin_width + 1e-9
+    # within the original range
+    assert min(m) >= min(full_masses) - 1e-9 and max(m) <= max(full_masses) + 1e-9
+
+
+def test_exact_when_window_fits():
+    masses = np.linspace(100, 200, 1200)
+    ints = np.random.default_rng(0).integers(1, 100, size=1200).astype(float)
+    out = downsample_window(masses, ints, 100, 200, max_pts=2500)
+    assert out["decimated"] is False
+    assert len(out["masses"]) == 1200
+    assert out["masses"].tolist() == masses.tolist()
+    assert out["n_in_window"] == 1200
+
+
+def test_synthetic_full_range():
+    rng = np.random.default_rng(42)
+    masses = np.sort(rng.uniform(150, 3000, 100_000))
+    ints = rng.lognormal(mean=4, sigma=2, size=100_000)
+    # inject sharp peaks
+    peak_idx = rng.choice(100_000, size=500, replace=False)
+    ints[peak_idx] *= 100
+    max_pts = 2500
+    out = downsample_window(masses, ints, 150, 3000, max_pts=max_pts)
+    assert out["decimated"] is True
+    assert out["n_in_window"] == 100_000
+    _check_properties(out, masses, ints, max_pts, masses)
+    assert out["full_range"] == [float(masses[0]), float(masses[-1])]
+
+
+@pytest.mark.parametrize("max_pts", [2, 3, 4, 5, 10, 50, 2500, 5000])
+def test_result_bounded_for_various_max_pts(max_pts):
+    rng = np.random.default_rng(7)
+    masses = np.linspace(500, 510, 20_000)
+    ints = rng.lognormal(mean=2, sigma=1, size=20_000)
+    out = downsample_window(masses, ints, 500, 510, max_pts=max_pts)
+    assert out["decimated"] is True
+    assert len(out["masses"]) <= max_pts
+    assert np.all(np.diff(out["masses"]) > 0)
+    assert max(out["ints"]) == max(ints)
+
+
+def test_real_window_data():
+    from conftest import load_test_sample
+
+    masses, ints = load_test_sample(0)  # 100k points, 674-687 Da
+    # full range
+    out = downsample_window(masses, ints, masses[0], masses[-1], max_pts=2500)
+    assert out["decimated"] is True
+    _check_properties(out, masses, ints, 2500, masses)
+    # a small sub-window (isotopic cluster region)
+    sub = (masses >= 679.0) & (masses <= 681.0)
+    wm, wi = masses[sub], ints[sub]
+    out2 = downsample_window(masses, ints, 679.0, 681.0, max_pts=2500)
+    assert out2["n_in_window"] == int(sub.sum())
+    if wm.size > 2500:
+        _check_properties(out2, wm, wi, 2500, masses)
+    else:
+        assert out2["decimated"] is False
+        assert len(out2["masses"]) == wm.size
+
+
+def test_aux_arrays_stay_aligned():
+    masses = np.linspace(10, 20, 30_000)
+    ints = np.random.default_rng(1).integers(1, 100, 30_000).astype(float)
+    out = downsample_window(masses, ints, 10, 20, max_pts=2000, aux={"ion_id": np.arange(30_000, dtype=np.int32)})
+    assert len(out["ion_id"]) == len(out["masses"])
+    # the kept points must correspond to the same positions in the full array
+    kept_positions = np.searchsorted(masses, out["masses"])
+    np.testing.assert_array_equal(out["ion_id"], np.arange(30_000, dtype=np.int32)[kept_positions])
+
+
+def test_empty_window():
+    masses = np.linspace(100, 200, 1000)
+    ints = np.ones(1000)
+    out = downsample_window(masses, ints, 250, 300, max_pts=1000)
+    assert out["masses"] == [] and out["ints"] == []
+    assert out["n_in_window"] == 0
+
+
+def test_clamp_max_pts():
+    assert clamp_max_pts(5001) == HARD_MAX_PTS
+    assert clamp_max_pts(0) == 1
+    assert clamp_max_pts(2500) == 2500
+
+
+def test_invalid_range():
+    masses = np.linspace(100, 200, 100)
+    ints = np.ones(100)
+    with pytest.raises(ValueError):
+        downsample_window(masses, ints, 150, 150, max_pts=10)

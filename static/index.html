@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MEDUSA 2026 — Web Service</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">MEDUSA 2026 <span class="sub">FT-ICR formula analysis</span></div>
+  <div id="session-info" class="session-info">
+    <span id="session-id" class="muted">no session</span>
+    <span id="session-file" class="file-name"></span>
+  </div>
+  <button id="new-session-btn" class="btn secondary">New session</button>
+</header>
+
+<main id="layout">
+  <!-- ============ LEFT: pipeline steps ============ -->
+  <section id="left-col">
+
+    <div class="step" id="step-load">
+      <div class="step-head"><span class="step-num">1</span> Load spectrum
+        <span class="spinner" data-spin="load" hidden></span></div>
+      <div class="tabs">
+        <button class="tab active" data-tab="files">Server files</button>
+        <button class="tab" data-tab="upload">Upload</button>
+      </div>
+      <div class="tab-pane" id="tab-files">
+        <input id="file-search" type="search" placeholder="Search mzXML files…">
+        <div id="file-list" class="file-list"></div>
+      </div>
+      <div class="tab-pane" id="tab-upload" hidden>
+        <div id="dropzone">Drag &amp; drop mzXML here<br><span class="muted">or</span><br>
+          <input id="upload-input" type="file" accept=".mzXML,.mzxml"></div>
+        <div id="upload-progress" hidden>
+          <div class="progress"><div id="upload-bar"></div></div>
+          <span id="upload-label" class="muted"></span>
+        </div>
+      </div>
+      <div id="load-summary" class="summary" hidden></div>
+    </div>
+
+    <div class="step" id="step-deiso">
+      <div class="step-head"><span class="step-num">2</span> Deisotoping
+        <span class="spinner" data-spin="deiso" hidden></span></div>
+      <div class="grid2">
+        <label>Algorithm <select id="d-algorithm">
+          <option value="adaptive" selected>adaptive</option>
+          <option value="std">std</option>
+          <option value="hist">hist</option>
+          <option value="quantile">quantile</option>
+        </select></label>
+        <label>z_max <select id="d-zmax">
+          <option>1</option><option>2</option><option selected>3</option>
+        </select></label>
+        <label>threshold <input id="d-threshold" type="number" step="0.01" value="0.15"></label>
+        <label>delta <input id="d-delta" type="number" step="0.001" value="0.007"></label>
+        <label>min_distance <input id="d-mindist" type="number" step="0.001" value="0.01"></label>
+        <label>n1 <input id="d-n1" type="number" step="1" value="2"></label>
+        <label>n2 <input id="d-n2" type="number" step="1" value="6"></label>
+      </div>
+      <div class="row">
+        <button class="btn" data-run="deiso">Run</button>
+        <label class="inline"><input type="checkbox" id="ions-toggle"> ions on spectrum</label>
+      </div>
+      <div id="deiso-summary" class="summary" hidden></div>
+      <details id="ion-legend" hidden><summary>ions legend (click to select)</summary>
+        <ul id="ion-legend-list" class="ion-legend"></ul>
+      </details>
+    </div>
+
+    <div class="step" id="step-elements">
+      <div class="step-head"><span class="step-num">3</span> Element classification
+        <span class="spinner" data-spin="elements" hidden></span></div>
+      <div class="row">
+        <label>Element <input id="e-element" type="text" value="Ir" size="4" list="element-list"></label>
+        <datalist id="element-list"></datalist>
+        <button class="btn" data-run="elements">Run</button>
+      </div>
+      <div id="elements-summary" class="summary" hidden></div>
+    </div>
+
+    <div class="step" id="step-threshold">
+      <div class="step-head"><span class="step-num">4</span> Threshold (knee)</div>
+      <div class="row">
+        <label><input type="radio" name="thr-source" value="auto" checked> auto (knee)</label>
+        <label><input type="radio" name="thr-source" value="manual"> manual</label>
+      </div>
+      <label class="slider-label">manual value
+        <input id="thr-slider" type="range" min="0" max="1" step="0.001" value="0.1" disabled>
+        <span id="thr-slider-val">0.100</span></label>
+      <button class="btn" id="apply-threshold-btn">Apply threshold</button>
+      <div id="knee-summary" class="summary" hidden></div>
+    </div>
+
+    <div class="step" id="step-highlight">
+      <div class="step-head"><span class="step-num">5</span> Highlight ions</div>
+      <div id="highlight-summary" class="summary" hidden></div>
+      <div class="row">
+        <button class="btn secondary" id="zoom-highlighted-btn" disabled>Zoom to highlighted ions</button>
+      </div>
+    </div>
+
+    <div class="step" id="step-formulas">
+      <div class="step-head"><span class="step-num">6</span> Molecular formula
+        <span class="spinner" data-spin="formulas" hidden></span></div>
+      <div class="row">
+        <label>Ion <input id="f-ion" type="number" min="0" value="0" class="w4"></label>
+        <label>± ppm <input id="f-ppm" type="number" step="0.5" value="4"></label>
+        <label>workers <input id="f-workers" type="number" min="1" max="16" value="1" class="w4"></label>
+      </div>
+      <label class="slider-label">Element limits
+        <select id="f-preset">
+          <option value="">— preset —</option>
+        </select></label>
+      <table id="f-elements" class="limits-table">
+        <thead><tr><th>element</th><th>min</th><th>max</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="row">
+        <button class="btn secondary" id="f-add-row">+ row</button>
+        <button class="btn" data-run="formulas">Run</button>
+      </div>
+      <div id="formulas-summary" class="summary" hidden></div>
+    </div>
+
+    <div class="step" id="step-compare">
+      <div class="step-head"><span class="step-num">7</span> Compare with spectrum
+        <span class="spinner" data-spin="compare" hidden></span></div>
+      <div class="row">
+        <label>Formula <input id="c-formula" type="text" placeholder="C53H58N4O2Ir"></label>
+        <button class="btn" data-run="compare">Run</button>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ============ CENTER: spectrum viewer ============ -->
+  <section id="center-col">
+    <div class="viewer-bar">
+      <span id="spectrum-status" class="muted">load a spectrum to start</span>
+      <span class="spacer"></span>
+      <label class="inline"><input type="checkbox" id="layer-probs"> highlight layer</label>
+      <label class="inline"><input type="checkbox" id="layer-ions"> ion colors</label>
+    </div>
+    <div id="spectrum-plot" class="plot"></div>
+    <div class="viewer-bar">
+      <span id="compare-status" class="muted">step 7 result appears here</span>
+    </div>
+    <div id="compare-plot" class="plot" hidden></div>
+  </section>
+
+  <!-- ============ RIGHT: tables ============ -->
+  <section id="right-col">
+    <div class="panel">
+      <h3>Ions <span class="muted" id="ions-count"></span></h3>
+      <div class="table-wrap">
+        <table id="ions-table" class="data-table">
+          <thead><tr>
+            <th data-sort="ion_id">ion</th>
+            <th data-sort="mz">m/z</th>
+            <th data-sort="charge">z</th>
+            <th data-sort="n_peaks">peaks</th>
+            <th data-sort="prob" id="prob-header">P(Ir)</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Knee chart</h3>
+      <div id="knee-plot" class="plot small"></div>
+    </div>
+    <div class="panel">
+      <h3>Ranked formulas <span class="muted" id="formulas-count"></span>
+        <button class="btn tiny" id="csv-export-btn" disabled>CSV</button></h3>
+      <div class="table-wrap tall">
+        <table id="formulas-table" class="data-table">
+          <thead><tr><th>#</th><th>formula</th><th>mass</th><th>Δ ppm</th><th>cosine</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Log</h3>
+      <div id="log-area" class="log-area"></div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" hidden></div>
+<script src="plotly-2.35.2.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
