@@ -623,7 +623,7 @@ def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: int 
     for i, (tm, ti) in enumerate(zip(theo_masses.tolist(), theo_ints.tolist())):
         fig.add_trace(
             go.Scatter(x=[tm, tm], y=[0.0, ti], mode="lines",
-                       name="Isotopic pattern", showlegend=(i == 0),
+                       name="Isotopic pattern", showlegend=False,
                        line=dict(color="#222222", width=1),
                        hovertemplate=f"m/z %{{x:.4f}}<br>rel. intensity {ti:.3f}<extra></extra>"),
             row=2, col=1,
@@ -639,7 +639,7 @@ def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: int 
     )
     # --- metrics block: boxed, top-right, does not cover the data ------ #
     metrics = (
-        f"&Delta; = {mass_delta:.2f} ppm<br>"
+        f"\u0394 = {mass_delta:.2f} ppm<br>"
         f"Cos. dist. = {cosine_dist:.1e}<br>"
         f"Matched peaks = {matched_pct * 100:.1f} %"
     )
@@ -658,7 +658,7 @@ def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: int 
     fig.update_layout(
         template="plotly_white",
         height=680,
-        title=dict(text=f"{formula.str_formula} vs spectrum  (charge {target_charge:g})", x=0.05),
+        title=dict(text=f"{formula.str_formula}  (z = {target_charge:g})", x=0.05),
         showlegend=True,
         legend=dict(orientation="h", y=1.12, x=0.4),
         margin=dict(l=60, r=30, t=80, b=40),

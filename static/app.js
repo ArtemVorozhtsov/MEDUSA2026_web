@@ -268,32 +268,34 @@ function renderSpectrum() {
   // raw spectrum — always shown, deisotoping never changes its rendering;
   // the hover annotation carries the ion index when deisotoping is done
   traces.push({
-    x: w.masses, y: w.ints, mode: "lines", name: "raw",
+    x: w.masses, y: w.ints, mode: "lines", name: "raw", showlegend: false,
     line: { color: "#2e6fb7", width: 1 },
     customdata: Array.isArray(w.ion_id)
-      ? w.ion_id.map((id) => (id >= 0 ? `ion ${id}` : "noise")) : undefined,
+      ? w.ion_id.map((id) => (id >= 0 ? `ion ${id}` : "")) : undefined,
     hovertemplate: Array.isArray(w.ion_id)
       ? "m/z %{x:.4f}<br>I %{y:.3g}<br>%{customdata}<extra></extra>"
       : "m/z %{x:.4f}<br>I %{y:.3g}<extra></extra>",
   });
 
   if (ionsLayerOn) {
-    // one colored dot at each ion's strongest point (peak top) in the window;
-    // the legend/annotation always names the ion by its base (argmax) peak
+    // one color per isotopic distribution: a dot at every visible point of
+    // the ion; the annotation always names the ion by its base (argmax) peak
     const byIon = new Map();
     for (let i = 0; i < w.masses.length; i++) {
       const id = w.ion_id[i];
       if (id < 0) continue;
-      const cur = byIon.get(id);
-      if (cur === undefined || w.ints[i] > w.ints[cur]) byIon.set(id, i);
+      if (!byIon.has(id)) byIon.set(id, []);
+      byIon.get(id).push(i);
     }
-    byIon.forEach((i, id) => {
+    byIon.forEach((idxs, id) => {
       const ion = S.ions[id];
       const name = ion ? `ion ${id} · m/z ${ion.mz.toFixed(3)} · z=${ion.charge}` : `ion ${id}`;
       traces.push({
-        x: [w.masses[i]], y: [w.ints[i]], mode: "markers", name,
-        marker: { color: ionColor(id), size: 7, line: { color: "#ffffff", width: 1 } },
-        hovertemplate: `<b>${name}</b><br>point m/z %{x:.4f}<br>I %{y:.3g}<br>` +
+        x: idxs.map((i) => w.masses[i]), y: idxs.map((i) => w.ints[i]),
+        mode: "markers", name, showlegend: false,
+        marker: { color: ionColor(id), size: 5, opacity: 0.9,
+                  line: { color: "#ffffff", width: 0.5 } },
+        hovertemplate: `<b>${name}</b><br>m/z %{x:.4f}<br>I %{y:.3g}<br>` +
           `base (argmax) peak m/z ${ion ? ion.mz.toFixed(4) : "?"}<extra></extra>`,
         "medusa-ion": id,
       });
@@ -312,6 +314,7 @@ function renderSpectrum() {
         x: xs, y: ys, mode: "markers",
         name: `P(${S.threshold.element}) > ${S.threshold.threshold}`,
         marker: { color: "#e03131", size: 4, opacity: 0.85 },
+        showlegend: true,
         hovertemplate: `m/z %{x:.4f}<br>I %{y:.3g}<br>P %{customdata:.4f}<extra></extra>`,
         customdata: ps,
       });
@@ -323,7 +326,7 @@ function renderSpectrum() {
     xaxis: { title: "m/z", range: currentRange },
     yaxis: { title: "Intensity" },
     dragmode: "zoom",
-    showlegend: traces.length > 1,
+    showlegend: true,
     legend: { orientation: "h", y: -0.18, font: { size: 10 } },
     height: $("#spectrum-plot").clientHeight || 420,
   };
@@ -684,7 +687,7 @@ async function runCompare() {
       const el = $("#compare-plot");
       el.hidden = false;
       $("#compare-status").textContent =
-        `comparing ${formula} with ion ${ionId} (charge ${S.ions[ionId] ? S.ions[ionId].charge : "?"})`;
+        `comparing ${formula} with ion ${ionId} (z=${S.ions[ionId] ? S.ions[ionId].charge : "?"})`;
       const layout2 = Object.assign({}, fig.layout,
         { height: Math.max(el.clientHeight || 0, 560) });
       if (el.data && el.data.length) Plotly.react(el, fig.data, layout2, { responsive: true });
