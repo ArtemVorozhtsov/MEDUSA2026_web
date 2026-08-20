@@ -40,7 +40,7 @@ from mass_automation.utils import ELEMENT_DICT
 
 from ..errors import PipelineError
 from ..state import Session
-from .downsample import DEFAULT_MAX_PTS, downsample_window, uniform_window
+from .downsample import COMPARE_HARD_MAX_PTS, clamp_max_pts, uniform_window, window_slice
 
 logger = logging.getLogger("medusa_web.pipeline")
 
@@ -569,7 +569,43 @@ def formulas(store, session_id: str, params: FormulaParams) -> Dict[str, Any]:
 # ---------------------------------------------------------------------- #
 # Step 7: compare chosen formula with the spectrum (Plotly figure)
 # ---------------------------------------------------------------------- #
-def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: int = DEFAULT_MAX_PTS) -> Dict[str, Any]:
+# Raw half-window (in Da) around each matched peak that is merged into a
+# decimated compare window so the line passes through the peak apex.
+MATCHED_NEIGHBOR_HALF_WIDTH = 0.01
+
+
+def _merge_matched_points(
+    masses: np.ndarray,
+    ints: np.ndarray,
+    real_masses: np.ndarray,
+    real_ints: np.ndarray,
+    x_left: float,
+    x_right: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Insert the matched-peak points (the compare circles) into the trace.
+
+    ``check_presence`` falls back to a *theoretical* mass when ``find_peaks``
+    finds no peak in the vicinity (weak isotopologues), so circle coordinates
+    are not always exact raw points; inserting them keeps every circle on the
+    drawn line. m/z order is preserved, exact duplicates are dropped (the
+    raw point wins, stable sort).
+    """
+    if real_masses.size == 0:
+        return masses, ints
+    real_masses = np.asarray(real_masses, dtype=np.float64)
+    real_ints = np.asarray(real_ints, dtype=np.float64)
+    sel = (real_masses >= x_left) & (real_masses <= x_right)
+    if not sel.any():
+        return masses, ints
+    all_m = np.concatenate([np.asarray(masses, dtype=np.float64), real_masses[sel]])
+    all_i = np.concatenate([np.asarray(ints, dtype=np.float64), real_ints[sel]])
+    order = np.argsort(all_m, kind="stable")
+    all_m, all_i = all_m[order], all_i[order]
+    keep = np.concatenate([[True], np.diff(all_m) > 0])
+    return all_m[keep], all_i[keep]
+
+
+def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: Optional[int] = None) -> Dict[str, Any]:
     session = store.get(session_id)
     if session.ion_id is None or not session.ion_info:
         raise PipelineError("run deisotoping (step 2) first", 400)
@@ -597,8 +633,37 @@ def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: int 
     x_right = int(round(float(theo_masses[-1]) + 1))
     # Shape-preserving (uniform-stride) window: relative intensities of the
     # isotopic cluster must match the real spectrum (peak-preserving decimation
-    # would distort them).
-    window = uniform_window(session.masses, session.ints, x_left, x_right, max_pts)
+    # would distort them). The window is small and server-fixed, so it is sent
+    # exact (undecimated) whenever it fits COMPARE_HARD_MAX_PTS. When it does
+    # not (dense low-m/z regions can hold >100k points in a few Da), the raw
+    # neighborhoods around each matched peak are merged into the selection so
+    # the drawn line still passes through every matched peak apex.
+    lo, hi = window_slice(session.masses, x_left, x_right)
+    n_in_window = hi - lo
+    if max_pts is None:
+        effective_max_pts = min(n_in_window, COMPARE_HARD_MAX_PTS)
+    else:
+        effective_max_pts = clamp_max_pts(max_pts, COMPARE_HARD_MAX_PTS)
+    extra = None
+    if n_in_window > effective_max_pts and real_masses.size:
+        win_masses = session.masses[lo:hi]
+        extra = np.concatenate([
+            np.arange(
+                int(np.searchsorted(win_masses, m - MATCHED_NEIGHBOR_HALF_WIDTH, side="left")),
+                int(np.searchsorted(win_masses, m + MATCHED_NEIGHBOR_HALF_WIDTH, side="right")),
+            )
+            for m in real_masses
+        ])
+    window = uniform_window(
+        session.masses, session.ints, x_left, x_right,
+        effective_max_pts, hard_cap=COMPARE_HARD_MAX_PTS, extra=extra,
+    )
+    # every circle ("Matched peaks", full resolution) must sit exactly on the
+    # experimental line — including theoretical fallbacks for weak peaks
+    window["masses"], window["ints"] = _merge_matched_points(
+        window["masses"], window["ints"],
+        real_masses, real_ints, x_left, x_right,
+    )
 
     fig = make_subplots(
         rows=2, cols=1,

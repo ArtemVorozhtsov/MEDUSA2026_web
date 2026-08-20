@@ -177,6 +177,23 @@ def test_full_chain(api_client, session, gt_formulas):
     assert "data" in fig and "layout" in fig
     assert len(fig["data"]) >= 2
 
+    # experimental trace (data[0]) uses the compare resolution: exact window
+    # whenever it fits COMPARE_HARD_MAX_PTS, so far above the legacy 2500;
+    # every matched peak (full-resolution, data[1]) must lie on the line
+    from app.engine.downsample import COMPARE_HARD_MAX_PTS
+    exp_x = fig["data"][0]["x"]
+    matched_x = fig["data"][1]["x"]
+    assert len(exp_x) > 2500
+    assert len(exp_x) <= COMPARE_HARD_MAX_PTS + 10_000  # + merged peak neighborhoods
+    exp_set = set(exp_x)
+    for mx in matched_x:
+        assert mx in exp_set, f"matched peak {mx} not on the experimental line"
+    # an explicit max_pts is still honoured (legacy behaviour)
+    r2 = c.get(f"/api/sessions/{sid}/compare",
+               params={"ion_id": ion_id, "formula": formula_str, "max_pts": 2500})
+    assert r2.status_code == 200
+    assert len(r2.json()["data"][0]["x"]) <= 2500 + len(matched_x) * 200
+
     # session now reports completed steps
     meta = c.get(f"/api/sessions/{sid}").json()
     assert meta["completed_steps"]["deisotope"] is True

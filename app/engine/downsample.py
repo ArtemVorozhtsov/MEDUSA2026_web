@@ -19,10 +19,13 @@ import numpy as np
 
 HARD_MAX_PTS = 5000
 DEFAULT_MAX_PTS = 2500
+# Static compare figure: the cluster window is small and server-fixed (not the
+# pan/zoom loop), so it may carry more points than the interactive viewer.
+COMPARE_HARD_MAX_PTS = 40000
 
 
-def clamp_max_pts(max_pts: int) -> int:
-    return int(max(1, min(int(max_pts), HARD_MAX_PTS)))
+def clamp_max_pts(max_pts: int, hard_cap: int = HARD_MAX_PTS) -> int:
+    return int(max(1, min(int(max_pts), hard_cap)))
 
 
 def window_slice(masses: np.ndarray, x0: float, x1: float):
@@ -136,15 +139,26 @@ def uniform_window(
     x0: float,
     x1: float,
     max_pts: int = DEFAULT_MAX_PTS,
+    hard_cap: int = HARD_MAX_PTS,
+    extra: Optional[np.ndarray] = None,
 ):
     """Shape-preserving window for the compare figure.
+
+    ``extra``: optional window-relative indices that must be included in the
+    output (e.g. raw neighborhoods around matched peaks, so the compare line
+    passes through every matched peak apex). The result is bounded by
+    ``max_pts + len(extra)``; ``extra`` is a no-op when the window is exact.
 
     Unlike :func:`downsample_window` (peak-preserving, biased to high-intensity
     points), this keeps every N-th point so the *relative* intensities of the
     isotopic cluster match the real spectrum. The window maximum is always
     kept. Returns ``{"masses", "ints", "n_in_window", "decimated"}``.
+
+    ``hard_cap`` bounds ``max_pts``: the interactive viewer uses
+    ``HARD_MAX_PTS`` (5000, task spec section 7), the compare figure uses
+    ``COMPARE_HARD_MAX_PTS`` (40000) so the window can be sent exact.
     """
-    max_pts = clamp_max_pts(max_pts)
+    max_pts = clamp_max_pts(max_pts, hard_cap)
     if x1 <= x0:
         raise ValueError("x1 must be greater than x0")
 
@@ -161,12 +175,15 @@ def uniform_window(
     sel = np.arange(0, window_masses.size, step)
     argmax = int(np.argmax(window_ints))
     sel = np.unique(np.concatenate([sel, [argmax]]))
-    if sel.size > max_pts:
+    if extra is not None and extra.size:
+        sel = np.unique(np.concatenate([sel,
+                                        np.clip(extra, 0, window_masses.size - 1)]))
+    elif sel.size > max_pts:
         # keep the bound exact: drop the sampled point nearest to the argmax
         keep = [i for i in sel if i != argmax]
         nearest = min(keep, key=lambda i: abs(int(i) - argmax))
         sel = sel[sel != nearest]
-    sel.sort()
+    sel = np.sort(sel)
     return {
         "masses": window_masses[sel], "ints": window_ints[sel],
         "n_in_window": int(window_masses.size), "decimated": True,

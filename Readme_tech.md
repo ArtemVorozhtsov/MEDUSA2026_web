@@ -202,7 +202,7 @@ session (app/state.py)  — массы/интенсивности, ion_id, ion_p
 | 4 | `knee` | `find_knee_threshold_numpy` (локальная копия утилиты нотебука — без import-path coupling в `research/`): точка, дальше всех от хорды (0,max)→(N,min) **в отсортированном по убыванию** массиве | API возвращает `probs` **отсортированными desc**; `knee_idx` — позиция в отсортированном массиве (чарт в UI рисует ровно это) |
 | 5 | `apply_threshold` | `source=auto` (knee) или `manual` (manual_value∈(0,1)); строит `point_probs` (на точку через ion_id) | результат — слой подсветки в вьювере («красные точки») |
 | 6 | `formulas` | `target_mass = (mz_base + ELECTRON_MASS)·charge`; `formula_generator_parallel(ELEMENTS, low/high_limits, target_mass, threshold_ppm, num_workers, max_chunk_size, mode="max")` → каждый кандидат: `Formula(...) + check_presence` в `joblib.Parallel(n_jobs=-1, loky)` → ранжирование **cosine desc, потом delta asc** | `cosine = 1 − cosine_distance` (сходство); ошибки генератора/валидации → 4xx/5xx с сообщением, никогда не «тихо пусто» |
-| 7 | `compare` | окно `[theo_masses[0]−1, theo_masses[−1]+1]`; `Formula.isodistribution()` + `del_isotopologues` + `check_presence` → Plotly-фигура 2×1 | окно — `uniform_window` (формосохраняющий), не peak-preserving (см. §7); стиль calculated = вертикали 0→rel.intensity + m/z-подписи (как в `plot_compare`); метрики (Δ, cos. dist., matched %) — в рамке справа сверху |
+| 7 | `compare` | окно `[theo_masses[0]−1, theo_masses[−1]+1]`; `Formula.isodistribution()` + `del_isotopologues` + `check_presence` → Plotly-фигура 2×1 | окно — `uniform_window` (формосохраняющий), не peak-preserving; окно небольшое и фиксировано сервером → уходит **точным** (недексимированным), пока ≤ `COMPARE_HARD_MAX_PTS` (40k), иначе uniform step≥1 **+ merge сырых окрестностей ±0.01 Da вокруг matched-пиков** — линия гарантированно проходит через все matched-пики (см. §7); стиль calculated = вертикали 0→rel.intensity + m/z-подписи (как в `plot_compare`); метрики (Δ, cos. dist., matched %) — в рамке справа сверху |
 
 ## 6. Guards против известных (латентных) багов ядра
 
@@ -230,8 +230,11 @@ session (app/state.py)  — массы/интенсивности, ion_id, ion_p
 
 ## 7. Работа с большими спектрами (критическое требование)
 
-В браузер **никогда** уходит ≤ `max_pts` точек (дефолт 2500, hard cap 5000 —
-`Query(le=5000)`).
+Для интерактивного вьювера (`/spectrum`) в браузер **никогда** уходит ≤
+`max_pts` точек (дефолт 2500, hard cap 5000 — `Query(le=5000)`; ограничение
+задачи §7 привязано именно к pan/zoom-циклу). Статичная compare-фигура —
+исключение: её окно фиксировано сервером и мало, поэтому там свой лимит
+`COMPARE_HARD_MAX_PTS = 40000` (см. ниже).
 
 ### `downsample_window` (основной вьювер) — peak-preserving
 
@@ -254,6 +257,38 @@ Peak-preserving дексимация **искажает относительны
 включение argmax (с контролем лимита ≤ max_pts: при переполнении выбрасывается
 ближайшая к argmax выброчная точка). Результат визуально совпадает с реальным
 спектром (проверено тестом: максимум compare-окна == максимум настоящего окна).
+
+**Разрешение compare-окна** (`pipeline.compare`): окно = кластер ±1 Da
+(на реальном спектре 7,96M точек это ~10–60k сырых точек). Политика:
+- `max_pts` не передан (дефолт) → `min(n_in_window, COMPARE_HARD_MAX_PTS)`:
+  окно ≤ 40k уходит **точным** (`decimated=false`, step=1) — линия проходит
+  ровно через вершины всех matched-пиков (они находятся в полном разрешении
+  через `check_presence`); > 40k — uniform со step ≥ 1;
+- `max_pts` передан явно (legacy) — respected как cap (clamp до 40k).
+**Merge окрестностей matched-пиков** (гибрид): плотные низкомассовые
+регионы могут содержать >100k сырых точек в несколько Da (замер: окно
+[165, 168] = 139 411 точек). Увеличивать cap до 150k нецелесообразно
+(payload ~4.5 МБ, SVG-рендер тяжёлый), поэтому при дексимации compare-окна в
+выборку дополнительно включаются сырые окрестности ±`MATCHED_NEIGHBOR_HALF_WIDTH`
+(0.01 Da) вокруг каждой matched-массы (индексы через `searchsorted` по срезам
+окна, параметр `extra` у `uniform_window`). Тогда линия гарантированно
+проходит через вершины **всех** matched-пиков (ищите их — кружки из
+`check_presence` находятся в полном разрешении), а число точек остаётся
+≤ 40k + ~5k. Точное окно (< 40k) merge не нужно — там все точки на месте.
+
+**Вставка самих точек-кружков** (`_merge_matched_points`): `check_presence`
+при **не**найденном пике (слабые изотопологи ниже порога `find_peaks`)
+возвращает **теоретическую** массу как fallback — это не сырая точка
+спектра, и в точном окне она могла отсутствовать на линии (кружок в
+подвесе). Поэтому координаты всех matched-точек (масса+интенсивность из
+`real_coords`) вставляются в экспериментальный трек (стабильная сортировка
+по m/z, точные дубликаты отбрасываются — выигрывает сырая точка). Кружок
+лежит на линии **по построению**, в любом режиме окна.
+
+Замер: окно [972, 980] (10 818 точек) — точная отрисовка стоит ~2 мс CPU и
+~0,35 МБ JSON; доминирующая доля времени compare — `check_presence`, от
+`max_pts` не зависит. 40k выбрано с запасом: SVG-рендер Plotly комфортен до
+~40–50k точек в статичной фигуре (сверх — `scattergl`).
 
 ### Вьювер (фронтенд)
 
@@ -340,7 +375,7 @@ Dockerfile — symlink и селекторы игнора (`MEDUSA2026/mass_auto
 | `GET /api/sessions/{id}/knee?element=Ir` | | `probs` (sorted desc!), `threshold, knee_idx` |
 | `POST /api/sessions/{id}/threshold` | `{"element", "source": auto|manual, "manual_value"}` | `threshold, n_points_above, n_ions_above, mz_range` |
 | `POST /api/sessions/{id}/formulas` | `ion_id, elements {El: [lo, hi]}, mass_threshold_ppm, num_workers, max_chunk_size` | `ranked: [{rank, formula, mass, delta_ppm, cosine}], n_candidates, n_valid, n_failed, skipped_pct, elapsed_s, reused` |
-| `GET /api/sessions/{id}/compare?ion_id&formula&max_pts` | Plotly figure JSON | `data[]` (exp, matched, vlines, подписи m/z), `layout.annotations` (2 заголовка сабплотов + блок метрик) |
+| `GET /api/sessions/{id}/compare?ion_id&formula[&max_pts]` | Plotly figure JSON; `max_pts` опционален (дефолт: точное окно ≤ 40k, иначе uniform step≥1) | `data[]` (exp, matched, vlines, подписи m/z), `layout.annotations` (2 заголовка сабплотов + блок метрик) |
 | `GET /api/formula_presets` | `ir_system`, `pubchem10`, `empty` | |
 | `GET /api/elements` | 118 символов `ELEMENT_DICT` (правильный case: Ir, Cl…) | |
 | `GET /healthz` | liveness + `models: {cgb, transformer}` + счётчики сессий | |
@@ -348,8 +383,11 @@ Dockerfile — symlink и селекторы игнора (`MEDUSA2026/mass_auto
 Документация: `/api/docs` (Swagger) и `/api/openapi.json`.
 
 **Compare-фигура** (строится на сервере, рендерится браузером):
-row 1 — экспериментальное окно (черная линия, `uniform_window`) + оранжевые
-«Matched peaks» из `check_presence`; row 2 — расчётный изотопный паттерн
+row 1 — экспериментальное окно (черная линия; `uniform_window`: точное
+окно ≤ `COMPARE_HARD_MAX_PTS`, иначе uniform step≥1 + merge сырых
+окрестностей ±0.01 Da вокруг matched-пиков) + оранжевые «Matched peaks»
+из `check_presence` (полное разрешение — линия проходит через все их
+вершины); row 2 — расчётный изотопный паттерн
 (черные вертикали 0→rel.intensity по одному на изотоп + m/z-подписи);
 блок метрик (Δ, Cos. dist., Matched %) — рамка в правом верхнем углу
 (paper-координаты, чтобы не перекрывать данные). Заголовок —

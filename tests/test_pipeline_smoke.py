@@ -229,7 +229,13 @@ def test_compare_figure(full_run, small_spectrum):
     assert len(data) >= 3
 
     exp = data[0]  # experimental trace, row 1
-    assert len(exp["x"]) <= 2500
+    matched = data[1]
+    # soft bound: uniform grid <= max_pts + merged matched-peak neighborhoods
+    assert len(exp["x"]) <= 2500 + len(matched["x"]) * 300
+    # every matched peak (full resolution) lies exactly on the experimental line
+    exp_set = set(exp["x"])
+    for mx in matched["x"]:
+        assert mx in exp_set
     masses, ints = small_spectrum
     x0, x1 = min(exp["x"]), max(exp["x"])
     mask = (masses >= x0 - 1e-9) & (masses <= x1 + 1e-9)

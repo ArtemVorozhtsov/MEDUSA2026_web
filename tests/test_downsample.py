@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app.engine.downsample import HARD_MAX_PTS, clamp_max_pts, downsample_window, uniform_window
+from app.engine.downsample import COMPARE_HARD_MAX_PTS, HARD_MAX_PTS, clamp_max_pts, downsample_window, uniform_window
 
 
 def _check_properties(out, window_masses, window_ints, max_pts, full_masses):
@@ -104,6 +104,8 @@ def test_clamp_max_pts():
     assert clamp_max_pts(5001) == HARD_MAX_PTS
     assert clamp_max_pts(0) == 1
     assert clamp_max_pts(2500) == 2500
+    assert clamp_max_pts(40_000, hard_cap=COMPARE_HARD_MAX_PTS) == COMPARE_HARD_MAX_PTS
+    assert clamp_max_pts(40_001, hard_cap=COMPARE_HARD_MAX_PTS) == COMPARE_HARD_MAX_PTS
 
 
 def test_invalid_range():
@@ -156,3 +158,34 @@ def test_uniform_window_shape_preserving(max_pts):
     assert gaps.max() <= base * 2.05 + 1e-9, "a chunk of the window was dropped"
     assert (gaps > base * 1.05).sum() <= 2
     assert (np.abs(gaps - base) <= 0.05 * base).mean() >= 0.9
+
+
+def test_uniform_window_extra_indices_merged():
+    masses = np.linspace(400, 412, 30_000)
+    ints = _iso_like(masses)
+    # apexes of the four synthetic isotope peaks (none lies on the stride-31 grid)
+    apexes = np.array(
+        [int(np.argmax(np.exp(-0.5 * ((masses - c) / 0.03) ** 2))) for c in (405.0, 406.1, 407.2, 408.3)]
+    )
+    assert all(int(a) % 31 != 0 for a in apexes)
+    base = uniform_window(masses, ints, 400, 412, max_pts=997, hard_cap=COMPARE_HARD_MAX_PTS)
+    out = uniform_window(masses, ints, 400, 412, max_pts=997, hard_cap=COMPARE_HARD_MAX_PTS, extra=apexes)
+    expected = set(base["masses"].tolist()) | {float(masses[a]) for a in apexes}
+    assert set(out["masses"].tolist()) == expected
+    assert np.all(np.diff(out["masses"]) > 0)
+
+
+def test_uniform_window_compare_resolution():
+    # compare policy: a window bigger than the interactive viewer cap (5000)
+    # but within COMPARE_HARD_MAX_PTS comes back exact (undecimated)
+    masses = np.linspace(400, 412, 20_000)
+    ints = _iso_like(masses)
+    out = uniform_window(masses, ints, 400, 412, max_pts=20_000, hard_cap=COMPARE_HARD_MAX_PTS)
+    assert out["decimated"] is False
+    assert len(out["masses"]) == 20_000
+    assert out["masses"].tolist() == masses.tolist()
+    # above the cap the result stays bounded by the cap
+    out2 = uniform_window(masses, ints, 400, 412, max_pts=20_000, hard_cap=5_000)
+    assert out2["decimated"] is True
+    assert len(out2["masses"]) <= 5_000
+    assert np.all(np.diff(out2["masses"]) > 0)

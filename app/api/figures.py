@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query, Request
 
-from ..engine.downsample import DEFAULT_MAX_PTS, downsample_window
+from ..engine.downsample import COMPARE_HARD_MAX_PTS, DEFAULT_MAX_PTS, downsample_window
 from ..engine.pipeline import compare
 from ..errors import BadRequest
 from ..jobs import run_cpu_job
@@ -71,8 +71,12 @@ async def compare_endpoint(
     session_id: str,
     ion_id: int = Query(...),
     formula: str = Query(..., min_length=2),
-    max_pts: int = Query(DEFAULT_MAX_PTS, ge=1, le=5000),
+    max_pts: Optional[int] = Query(None, ge=1, le=COMPARE_HARD_MAX_PTS),
 ) -> dict:
-    """Plotly figure: experimental window around the ion vs theoretical isotope pattern."""
+    """Plotly figure: experimental window around the ion vs theoretical isotope pattern.
+
+    ``max_pts`` caps the experimental trace. Default: the exact (undecimated)
+    window whenever it fits ``COMPARE_HARD_MAX_PTS`` points.
+    """
     return await run_cpu_job(request.app, compare,
                              request.app.state.store, session_id, ion_id, formula, max_pts)
