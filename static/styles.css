@@ -162,9 +162,9 @@ body {
 }
 #spectrum-plot {
   flex: 1; min-height: 380px; background: var(--panel);
-  border: 1px solid var(--border); border-radius: 8px;
+  border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
 }
-#compare-plot { flex: 0 0 auto; min-height: 560px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+#compare-plot { flex: 0 0 auto; min-height: 560px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .plot { width: 100%; }
 .plot.small { height: 220px; }
 
