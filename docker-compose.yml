@@ -23,7 +23,7 @@ services:
       SPECTRA_DIR: /data/spectra
       UPLOAD_DIR: /data/uploads
       MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-300}"
-      MAX_ACTIVE_SESSIONS: "${MAX_ACTIVE_SESSIONS:-8}"
+      MAX_ACTIVE_SESSIONS: "${MAX_ACTIVE_SESSIONS:-32}"
       MAX_CONCURRENT_CPU_JOBS: "${MAX_CONCURRENT_CPU_JOBS:-2}"
     volumes:
       - ${SPECTRA_DIR:-./spectra}:/data/spectra:ro
