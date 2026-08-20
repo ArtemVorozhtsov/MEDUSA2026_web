@@ -230,6 +230,37 @@ def test_upload_flow(api_client, small_spectrum):
     assert c.delete(f"/api/sessions/{body['session_id']}").status_code == 200
 
 
+def test_upload_purge_on_session_reset(api_client, small_spectrum):
+    c = api_client
+    masses, ints = small_spectrum
+    buf = io.BytesIO()
+    write_mzxml(buf, masses, ints)
+    data = buf.getvalue()
+
+    def _upload_session(name):
+        r = c.post("/api/upload", files={"file": (name, data, "application/octet-stream")})
+        assert r.status_code == 200, r.text
+        file_id = r.json()["file_id"]
+        r = c.post("/api/sessions", json={"source": "upload", "file_id": file_id})
+        assert r.status_code == 200, r.text
+        return file_id, r.json()["session_id"]
+
+    upload_dir = Path(c.app.state.settings.upload_dir)
+
+    # default (flag off): uploaded file survives the session reset
+    file_id, sid = _upload_session("purge_default.mzXML")
+    assert (upload_dir / file_id).is_file()
+    assert c.delete(f"/api/sessions/{sid}").status_code == 200
+    assert (upload_dir / file_id).is_file(), "upload must survive by default"
+
+    # flag on: uploaded file is removed together with the session
+    from dataclasses import replace
+    c.app.state.settings = replace(c.app.state.settings, delete_uploads_on_session_reset=True)
+    file_id2, sid2 = _upload_session("purge_on.mzXML")
+    assert c.delete(f"/api/sessions/{sid2}").status_code == 200
+    assert not (upload_dir / file_id2).exists(), "upload must be purged when the flag is on"
+
+
 def test_error_handling(api_client, session, spectrum_file):
     c = api_client
     sid = session["session_id"]

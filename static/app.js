@@ -41,6 +41,17 @@ function toast(msg, isError = false, ms = 4000) {
   toastTimer = setTimeout(() => { el.hidden = true; }, ms);
 }
 
+function errMsg(data, status) {
+  let detail = data && data.detail ? data.detail : `HTTP ${status}`;
+  if (Array.isArray(detail)) { // FastAPI validation errors (422)
+    detail = detail.map((e) => {
+      const field = (e.loc || []).filter(Boolean).join(".");
+      return field ? `${field}: ${e.msg}` : (e.msg || JSON.stringify(e));
+    }).join("; ");
+  }
+  return String(detail);
+}
+
 async function api(path, options = {}) {
   const opts = { headers: {}, ...options };
   if (opts.body && typeof opts.body === "object" && !(opts.body instanceof FormData)) {
@@ -51,8 +62,7 @@ async function api(path, options = {}) {
   let data = null;
   try { data = await resp.json(); } catch (_) { /* non-JSON */ }
   if (!resp.ok) {
-    const detail = data && data.detail ? data.detail : `HTTP ${resp.status}`;
-    const err = new Error(detail);
+    const err = new Error(errMsg(data, resp.status));
     err.status = resp.status;
     err.data = data;
     throw err;
@@ -157,7 +167,10 @@ function uploadFile(file, onDone) {
       catch (_) { toast("bad server response", true); }
     } else {
       let detail = `upload failed (HTTP ${xhr.status})`;
-      try { detail = JSON.parse(xhr.responseText).detail || detail; } catch (_) {}
+      try {
+        const parsed = JSON.parse(xhr.responseText);
+        if (parsed && parsed.detail) detail = errMsg(parsed, xhr.status);
+      } catch (_) {}
       toast(detail, true);
     }
   };

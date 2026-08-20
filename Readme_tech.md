@@ -144,7 +144,11 @@ session (app/state.py)  — массы/интенсивности, ion_id, ion_p
 
 - **`app/config.py`** — `Settings` (dataclass) из env: `SPECTRA_DIR`,
   `UPLOAD_DIR`, `MAX_UPLOAD_MB` (300), `MAX_ACTIVE_SESSIONS` (8),
-  `MAX_CONCURRENT_CPU_JOBS` (2), `PORT` (8000), `CGB_MODEL`, `TRANSFORMER_CKPT`.
+  `MAX_CONCURRENT_CPU_JOBS` (2), `DELETE_UPLOADS_ON_SESSION_RESET` (false),
+  `PORT` (8000), `CGB_MODEL`, `TRANSFORMER_CKPT`.
+  Флаг: при `DELETE_UPLOADS_ON_SESSION_RESET=true` удаление сессии
+  (`DELETE /api/sessions/{id}`) дополнительно удаляет её uploaded-файл
+  (только `source=upload`; файлы из `SPECTRA_DIR` не трогаются).
   `get_settings()` — `lru_cache`; тесты вызывают `reset_settings_cache()`.
   Порядок поиска моделей: env → `/app/models` (image) → dev-checkout.
 - **`app/state.py`** — `Session` (одна сессия = один mzXML, первый скан):
@@ -597,5 +601,6 @@ docker compose down                             # стоп
 ```
 
 Полезные env (compose): `PORT`, `SPECTRA_DIR`, `MAX_UPLOAD_MB`,
-`MAX_ACTIVE_SESSIONS`, `MAX_CONCURRENT_CPU_JOBS`; внутри image:
+`MAX_ACTIVE_SESSIONS`, `MAX_CONCURRENT_CPU_JOBS`, `DELETE_UPLOADS_ON_SESSION_RESET`;
+внутри image:
 `CGB_MODEL`, `TRANSFORMER_CKPT` (override путей моделей).

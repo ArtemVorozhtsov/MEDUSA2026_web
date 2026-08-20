@@ -1,6 +1,7 @@
 """Session lifecycle: create (from folder file or upload), inspect, delete."""
 from __future__ import annotations
 
+import logging
 import os
 from typing import Optional
 
@@ -11,6 +12,8 @@ from ..engine.pipeline import element_symbols
 from ..engine.spectrum_io import load_spectrum
 from ..errors import ApiError, BadRequest, NotFound
 from ..jobs import run_cpu_job
+
+logger = logging.getLogger("medusa_web.sessions")
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 
@@ -81,9 +84,24 @@ def get_session(request: Request, session_id: str) -> dict:
     return {**session.summary(), "logs": session.recent_logs()}
 
 
+def _purge_upload_if_configured(settings, session) -> None:
+    """Drop the uploaded file on session reset if DELETE_UPLOADS_ON_SESSION_RESET is on.
+
+    Folder-source files are never touched (they live on a shared volume)."""
+    if not settings.delete_uploads_on_session_reset or session.source != "upload":
+        return
+    try:
+        if os.path.isfile(session.path):
+            os.unlink(session.path)
+            logger.info("purged uploaded file %s", session.path)
+    except OSError:
+        logger.warning("could not purge uploaded file %s", session.path, exc_info=True)
+
+
 @router.delete("/sessions/{session_id}")
 def delete_session(request: Request, session_id: str) -> dict:
     session = request.app.state.store.delete(session_id)
+    _purge_upload_if_configured(request.app.state.settings, session)
     return {"deleted": session.id}
 
 

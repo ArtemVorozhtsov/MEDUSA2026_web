@@ -35,6 +35,7 @@ class Settings:
     max_upload_mb: int
     max_active_sessions: int
     max_concurrent_cpu_jobs: int
+    delete_uploads_on_session_reset: bool
     port: int
     cgb_model: str
     transformer_ckpt: str
@@ -47,6 +48,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings(
@@ -55,6 +63,7 @@ def get_settings() -> Settings:
         max_upload_mb=_env_int("MAX_UPLOAD_MB", 300),
         max_active_sessions=_env_int("MAX_ACTIVE_SESSIONS", 8),
         max_concurrent_cpu_jobs=_env_int("MAX_CONCURRENT_CPU_JOBS", 2),
+        delete_uploads_on_session_reset=_env_bool("DELETE_UPLOADS_ON_SESSION_RESET", False),
         port=_env_int("PORT", 8000),
         cgb_model=_default_model("CGB_MODEL", "MEDUSA2026/data/models/charge1_big_optuna150.pkl"),
         transformer_ckpt=_default_model("TRANSFORMER_CKPT", "MEDUSA2026/nn_models/transfomer_classifier.ckpt"),
