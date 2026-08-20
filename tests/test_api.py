@@ -162,6 +162,13 @@ def test_full_chain(api_client, session, gt_formulas):
              if {k: int(v) for k, v in Formula(row["formula"]).dict_formula.items() if int(v) > 0} == gt_dict]
     assert found, "GT formula missing from ranked list"
 
+    # num_workers is capped at 16
+    r = c.post(f"/api/sessions/{sid}/formulas", json={
+        "ion_id": ion_id, "elements": {k: list(v) for k, v in SMALL_ELEMENT_SPACE.items()},
+        "mass_threshold_ppm": 4.0, "num_workers": 17,
+    })
+    assert r.status_code == 422
+
     # cached re-run
     r = c.post(f"/api/sessions/{sid}/formulas", json={
         "ion_id": ion_id, "elements": {k: list(v) for k, v in SMALL_ELEMENT_SPACE.items()},

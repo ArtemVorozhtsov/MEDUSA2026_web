@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from ..engine.pipeline import (
     FORMULA_PRESETS,
+    MAX_FORMULA_WORKERS,
     DeisotopeParams,
     ElementsParams,
     FormulaParams,
@@ -78,7 +79,7 @@ class FormulaBody(BaseModel):
     ion_id: int
     elements: Dict[str, Tuple[int, int]]
     mass_threshold_ppm: float = 4.0
-    num_workers: int = 1
+    num_workers: int = Field(default=1, ge=1, le=MAX_FORMULA_WORKERS)
     max_chunk_size: int = 10_000
 
 

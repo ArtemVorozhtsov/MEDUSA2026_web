@@ -76,6 +76,9 @@ class ThresholdParams:
     manual_value: Optional[float] = None
 
 
+MAX_FORMULA_WORKERS = 16  # hard cap on parallel processes for the formula step
+
+
 @dataclass(frozen=True)
 class FormulaParams:
     ion_id: int
@@ -494,6 +497,7 @@ def formulas(store, session_id: str, params: FormulaParams) -> Dict[str, Any]:
     target_charge = ion["charge"]
     target_mass = (target_mz + ELECTRON_MASS) * target_charge
 
+    workers = max(1, min(params.num_workers, MAX_FORMULA_WORKERS))
     t0 = time.time()
     try:
         candidates, skipped_pct = formula_generator_parallel(
@@ -502,7 +506,7 @@ def formulas(store, session_id: str, params: FormulaParams) -> Dict[str, Any]:
             high_limits=high_limits,
             target_mass=target_mass,
             threshold=params.mass_threshold_ppm,
-            num_workers=params.num_workers,
+            num_workers=workers,
             max_chunk_size=params.max_chunk_size,
             mode="max",
         )
@@ -532,7 +536,7 @@ def formulas(store, session_id: str, params: FormulaParams) -> Dict[str, Any]:
         except Exception:  # noqa: BLE001 - check_presence can fail on odd formulas
             return None
 
-    validated = Parallel(n_jobs=-1, backend="loky", verbose=0, batch_size="auto")(
+    validated = Parallel(n_jobs=workers, backend="loky", verbose=0, batch_size="auto")(
         delayed(_validate)(candidate) for candidate in candidates
     )
     ranked = [row for row in validated if row is not None]
