@@ -691,7 +691,7 @@ async function runCompare() {
       $("#compare-status").textContent =
         `comparing ${formula} with ion ${ionId} (z=${S.ions[ionId] ? S.ions[ionId].charge : "?"})`;
       const layout2 = Object.assign({}, fig.layout,
-        { height: Math.max(el.clientHeight || 0, 420) });
+        { height: Math.max(el.clientHeight || 0, 560) });
       const drawn = (el.data && el.data.length)
         ? Plotly.react(el, fig.data, layout2, { responsive: true })
         : Plotly.newPlot(el, fig.data, layout2, { responsive: true });
@@ -700,6 +700,7 @@ async function runCompare() {
         // explicit layout.height, so Plotly's responsive mode won't do it)
         const specEl = $("#spectrum-plot");
         if (specEl.data) Plotly.Plots.resize(specEl);
+        el.scrollIntoView({ behavior: "smooth", block: "nearest" });
       });
     } catch (err) {
       toast(err.message, true);
