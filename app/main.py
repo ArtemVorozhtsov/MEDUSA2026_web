@@ -13,6 +13,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import __version__
 from .api import analysis, figures, files, sessions
@@ -101,6 +102,20 @@ def create_app() -> FastAPI:
             "active_sessions": len(app.state.store),
             "max_sessions": settings.max_active_sessions,
         }
+
+    class _NoCacheStatic(BaseHTTPMiddleware):
+        """Revalidate UI assets on every load (no stale JS/CSS after rebuilds)."""
+
+        def _target(self, path: str) -> bool:
+            return path in ("/", "/index.html") or path.rsplit(".", 1)[-1].lower() in {"js", "css"}
+
+        async def dispatch(self, request, call_next):
+            response = await call_next(request)
+            if self._target(request.url.path):
+                response.headers["Cache-Control"] = "no-cache"
+            return response
+
+    app.add_middleware(_NoCacheStatic)
 
     # Static UI (single page). Mounted last so /api/* and /healthz win.
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
