@@ -86,7 +86,7 @@ medusa_web/
 
 | Что | Откуда | Как используется |
 |---|---|---|
-| `mass_automation` (пакет) | `MEDUSA2026/mass_automation` | ядро: `Experiment/Spectrum`, `MlDeisotoper`, `TransformerModel`, `formula_generator_parallel`, `check_presence`, `Formula`, `ELEMENT_DICT` |
+| `mass_automation` (пакет) | `MEDUSA2026/mass_automation` | ядро: `Experiment/Spectrum`, `MlDeisotoper`, `TransformerModel`, `formula_generator_parallel`, `check_presence`, `Formula`, `ELEMENT_DICT`; **для этого проекта patched**: `check_formula.py` (якорные окна пиков) + `plot.py` (см. §12 п.16) |
 | CGB-модель деизотопирования | `MEDUSA2026/data/models/charge1_big_optuna150.pkl` (28.5 МБ) | запекается в image, `ENV CGB_MODEL` |
 | Чекпоинт Transformer | `MEDUSA2026/nn_models/transfomer_classifier.ckpt` (57.6 МБ) | запекается в image, `ENV TRANSFORMER_CKPT` |
 | Тестовые данные | `MEDUSA2026/data/formula_determination_test/` | **срезы** (первые 8 сэмплов) скопированы в `tests/data/` — image не зависит от оригинальных 107 МБ |
@@ -540,6 +540,20 @@ cd medusa_web && docker compose run --rm web pytest medusa_web/tests -q
     совместимы с нашим figure-JSON, но проверить нужно (API `Plotly.newPlot/
     react` и события `plotly_relayout/plotly_click` стабильны).
 
+16. **`check_presence` — поведение ядра (изменено для этого проекта,
+    MEDUSA2026 commit `04c7434`)**: окно поиска каждого изотопического пика
+    привязано к **теоретической** массе + бегущий сдвиг (медиана
+    matched−theo по найденным пикам), а не к предыдущему matched-пику
+    (цепочный дрейф при нелинейной калибровке уводил окно за собственный
+    пик, и matched «уходил» на чужой пик соседней молекулы — кейс Pd2-димера,
+    m/z 1147/1155). `dist_error` по умолчанию 0.006 (было 0.003). Кружки
+    «Matched peaks» на compare — это именно выбранные алгоритмом пики:
+    для слабых изотопологов, где `find_peaks` пик не нашёл, ядро возвращает
+    **теоретическую** массу (fallback) — поэтому в `compare()` сами точки
+    вставляются в линию (`_merge_matched_points`), и кружок лежит на линии
+    по построению. Метрики (Δ, косинус, matched %) считаются на этих же
+    точках — как в нотебуке.
+
 ---
 
 ## 13. Производительность (измерено на целевой машине, 64 ядра / 188 ГБ)
@@ -554,7 +568,7 @@ cd medusa_web && docker compose run --rm web pytest medusa_web/tests -q
 | Formulas (ir_system, топ-ион) | ~2–3 с (локо-валидация 30 кандидатов) |
 | Полная цепочка 1→7 (E2E, без времени пользователя) | **~12–15 с** (лимит ~2 мин) |
 | Запрос окна спектра (любое) | ≤2500 точек; <300 мс (хуже 220 мс на холодном кэше) |
-| Тесты: venv / в image | ~80 с / ~50 с (41 теста) |
+| Тесты: venv / в image | ~80 с / ~50 с (43 теста) |
 
 Память сессии на 8M-спектр: ~2×8M×8 Б (float64 masses/ints) + `ion_id`
 (int32) + `ion_probs` — порядок сотен МБ; при 8 сессиях — единицы ГБ.
