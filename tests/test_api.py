@@ -98,12 +98,12 @@ def test_full_chain(api_client, session, gt_formulas):
     assert deiso["n_ions"] >= 1
     assert len(deiso["ions"]) == deiso["n_ions"]
 
-    # cached re-run is instant
+    # deisotoping is uncached: a re-run recomputes the same ion set
     r2 = c.post(f"/api/sessions/{sid}/deisotope", json={
         "algorithm": "adaptive", "z_max": 3, "min_distance": 0.01,
         "threshold": 0.15, "delta": 0.007, "n1": 2, "n2": 6,
     })
-    assert r2.json()["reused"] is True
+    assert r2.json()["n_ions"] == deiso["n_ions"]
 
     # ions layer present
     r = c.get(f"/api/sessions/{sid}/spectrum",
@@ -291,7 +291,7 @@ def test_redeisotope_invalidates_downstream(api_client, spectrum_file):
 
     # re-deisotope with different parameters: same ion ids are now different ions
     d2 = deiso(min_distance=0.05)
-    assert d2["reused"] is False
+    assert "reused" not in d2  # step 2 is uncached
 
     # step 4 must refuse to run on stale probabilities
     r = c.post(f"/api/sessions/{sid}/threshold",

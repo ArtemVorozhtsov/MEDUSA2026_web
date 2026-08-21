@@ -8,6 +8,7 @@ const S = {
   session: null,          // session_id
   fileInfo: null,         // {file_name, n_points, mz_range, load_time_s}
   ions: [],               // [{ion_id, mz, charge, n_peaks, mz_min, mz_max}]
+  lastDeisotopeHash: null,// params_hash of the last deisotoping (null = none yet)
   ionProbs: {},           // ion_id -> prob (selected element)
   selectedIon: null,
   element: "Ir",
@@ -224,7 +225,7 @@ function resetPostDeisotopeState() {
 }
 
 function resetDownstreamState() {
-  S.ions = []; S.ionProbs = {}; S.selectedIon = null; S.threshold = null;
+  S.ions = []; S.lastDeisotopeHash = null; S.ionProbs = {}; S.selectedIon = null; S.threshold = null;
   S.knee = null; S.ranked = null; S.window = null;
   currentRange = null;
   renderLogs([]);
@@ -436,12 +437,16 @@ async function runDeisotope() {
   await withBusy("deiso", async () => {
     try {
       const r = await api(`/api/sessions/${S.session}/deisotope`, { method: "POST", body });
+      // step 2 is uncached (fast): every Run recomputes; the params_hash tells
+      // whether the ion set — and hence all downstream results — changed
+      const deisoChanged = S.lastDeisotopeHash !== null && S.lastDeisotopeHash !== r.params_hash;
       S.ions = r.ions;
-      if (!r.reused) resetPostDeisotopeState();
+      S.lastDeisotopeHash = r.params_hash;
+      if (deisoChanged) resetPostDeisotopeState();
       renderLogs(r.logs);
       $("#deiso-summary").hidden = false;
       $("#deiso-summary").innerHTML =
-        `<b>${r.n_ions}</b> ions in ${r.elapsed_s}s${r.reused ? " (cached)" : ""}<br>` +
+        `<b>${r.n_ions}</b> ions in ${r.elapsed_s}s<br>` +
         `<span class="muted">peaks: ${S.ions.reduce((a, i) => a + i.n_peaks, 0).toLocaleString()}</span>`;
       renderIonLegend();
       renderIonsTable();

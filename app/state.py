@@ -51,7 +51,7 @@ class Session:
         "created_at", "last_access",
         "logs", "lock",
         # step 2: deisotoping
-        "deisotope_cache", "ion_id", "ion_info", "ion_charge", "last_deisotope_hash",
+        "ion_id", "ion_info", "ion_charge", "last_deisotope_hash",
         # step 3: elements
         "elements_cache", "ion_probs", "ion_probs_for_deiso", "elements_element",
         # step 4/5: threshold + highlight
@@ -81,7 +81,6 @@ class Session:
         self.logs: Deque[LogEntry] = deque(maxlen=LOG_BUFFER_SIZE)
         self.lock = threading.Lock()
 
-        self.deisotope_cache: Dict[str, Dict[str, Any]] = {}
         self.ion_id: Optional[np.ndarray] = None          # per-point int32, -1 = noise
         self.ion_info: List[Dict[str, Any]] = []          # per-ion summary (latest run)
         self.ion_charge: Optional[np.ndarray] = None      # per-ion mean charge
@@ -137,7 +136,7 @@ class Session:
             "n_ions": len(self.ion_info) if self.ion_id is not None else None,
             "element": self.elements_element,
             "completed_steps": {
-                "deisotope": bool(self.deisotope_cache),
+                "deisotope": self.ion_id is not None,
                 "elements": bool(self.elements_cache),
                 "threshold": bool(self.threshold_state),
                 "formulas": bool(self.formulas_cache),

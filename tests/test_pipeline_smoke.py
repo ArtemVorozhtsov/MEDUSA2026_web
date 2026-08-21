@@ -86,7 +86,7 @@ def full_run(models, session):
 def test_deisotope(full_run, small_spectrum):
     r = full_run["deiso"]
     assert r["n_ions"] >= 1
-    assert r["reused"] is False
+    assert "reused" not in r  # step 2 is uncached by design
     sess = full_run["sess"]
     assert sess.ion_id.shape == (small_spectrum[0].size,)
     assert sess.ion_id.min() >= -1
@@ -138,8 +138,8 @@ def test_formulas_ranked_and_gt(full_run, gt_formulas):
 def test_cache_reuse_is_instant(full_run, models):
     deisotoper, _ = models
     store, sess = full_run["store"], full_run["sess"]
+    # step 2 is uncached: a re-run recomputes, but the ion set is unchanged
     again = deisotope(store, sess.id, DeisotopeParams(), deisotoper)
-    assert again["reused"] is True
     assert again["n_ions"] == full_run["deiso"]["n_ions"]
     again_el = classify_elements(store, sess.id, ElementsParams(element="Ir"), None)
     assert again_el["reused"] is True

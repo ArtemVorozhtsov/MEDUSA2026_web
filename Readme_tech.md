@@ -135,7 +135,7 @@ run_cpu_job()  (app/jobs.py)
    │  asyncio.to_thread(fn, ...)   (worker-поток, пул по умолчанию)
    ▼
 pipeline.<step>(store, session_id, params, models...)
-   │  cache по params_hash -> "reused": true (повтор без пересчёта)
+   │  cache шагов 3–6 по params_hash -> "reused": true; шаг 2 (deisotope) — без кэша
    ▼
 session (app/state.py)  — массы/интенсивности, ion_id, ion_probs, кэши шагов
 ```
@@ -152,10 +152,11 @@ session (app/state.py)  — массы/интенсивности, ion_id, ion_p
   `get_settings()` — `lru_cache`; тесты вызывают `reset_settings_cache()`.
   Порядок поиска моделей: env → `/app/models` (image) → dev-checkout.
 - **`app/state.py`** — `Session` (одна сессия = один mzXML, первый скан):
-  float64 `masses`/`ints`, объект `Spectrum`, кэши шагов
-  (`deisotope_cache`, `elements_cache`, `knee_cache`, `formulas_cache`;
-  кэши шагов 3–6 метятся `for_deiso` — хешем текущей деизотопии, и
-  инвалидируются при её перезапуске с другими параметрами),
+  float64 `masses`/`ints`, объект `Spectrum`, кэши шагов 3–6
+  (`elements_cache`, `knee_cache`, `formulas_cache`;
+  метятся `for_deiso` — хешем текущей деизотопии, и
+  инвалидируются при её перезапуске с другими параметрами;
+  сам шаг 2 не кэшируется),
   `ion_probs` (n_ions × 119, `ion_probs_for_deiso` — хеш, для которой
   посчитана), `point_probs` (на точку, для подсветки),
   лог-буфер (deque 200), `threading.Lock`. `SessionStore` — dict + лимит
@@ -171,8 +172,9 @@ session (app/state.py)  — массы/интенсивности, ion_id, ion_p
   `ApiError → {"detail": ...}`; **catch-all `Exception → 500 JSON`** —
   контракт «все ошибки JSON» держится даже для внутренних сбоев ядра.
 - **`app/engine/pipeline.py`** — сердце. Чистые функции
-  `(store, session_id, params) -> dict` с кэшированием по `params_hash`
-  (повтор с теми же параметрами мгновенный, `reused: true`). Каждый шаг
+  `(store, session_id, params) -> dict`; шаги 3–6 кэшируются по `params_hash`
+  (повтор с теми же параметрами мгновенный, `reused: true`), шаг 2 (deisotope)
+  всегда пересчитывается (быстрый, без кэша). Каждый шаг
   обёрнут в guards (см. §6). Модели сюда приходят из `app.state`
   (загружаются в lifespan `main.py` — **импорт engine-модулей без side
   effects**, это проверяется тестами).
@@ -204,7 +206,7 @@ session (app/state.py)  — массы/интенсивности, ion_id, ion_p
 | Шаг | Функция | Что делает | Ключевые детали |
 |---|---|---|---|
 | 1 | `load_spectrum` | `Experiment()` → скан 0 → `masses`/`ints` float64 + `Spectrum` | ~1.5 с на 8M точек |
-| 2 | `deisotope` | `MlDeisotoper().load(CGB_MODEL)(spectrum, algorithm, z_max, min_distance, threshold, delta, n1, n2)` | дефолты = нотебук: `adaptive, z_max=3, 0.01, 0.15, 0.007, n1=2, n2=6`; на выходе `ion_id` на точку (-1 = шум) + `ion_info` (m/z **base peak = argmax интенсивности**, заряд = среднее, n_peaks) |
+| 2 | `deisotope` | `MlDeisotoper().load(CGB_MODEL)(spectrum, algorithm, z_max, min_distance, threshold, delta, n1, n2)` | дефолты = нотебук: `adaptive, z_max=3, 0.01, 0.15, 0.007, n1=2, n2=6`; на выходе `ion_id` на точку (-1 = шум) + `ion_info` (m/z **base peak = argmax интенсивности**, заряд = среднее, n_peaks); шаг **не кэшируется** — быстрый, каждый Run пересчитывает |
 | 3 | `classify_elements` | по каждому иону: `RealIsotopicDistribution.get_representation(f=np.mean, mode="middle", length=101)` → `center_representation(repr, mass, charge_mean)` → нормировка на глобальный max → forward Transformer (батч (n_ions, seq, 100)) → sigmoid | **input_dim=100** (get_representation length=101 → vectorize отбрасывает центр → n_bins−1=100), **output_dim=119** = `N_ELEMENTS`; столбец c ↔ атомный номер c+1 (`ELEMENT_DICT` — 118 имён, у модели класс на один больше); каждый ион в try/except — см. §6 |
 | 4 | `knee` | `find_knee_threshold_numpy` (локальная копия утилиты нотебука — без import-path coupling в `research/`): точка, дальше всех от хорды (0,max)→(N,min) **в отсортированном по убыванию** массиве | API возвращает `probs` **отсортированными desc**; `knee_idx` — позиция в отсортированном массиве (чарт в UI рисует ровно это) |
 | 5 | `apply_threshold` | `source=auto` (knee) или `manual` (manual_value∈(0,1)); строит `point_probs` (на точку через ion_id) | результат — слой подсветки в вьювере («красные точки») |
@@ -377,7 +379,7 @@ Dockerfile — symlink и селекторы игнора (`MEDUSA2026/mass_auto
 | `GET /api/sessions/{id}` | метаданные + `completed_steps` | |
 | `DELETE /api/sessions/{id}` | удалить (освобождает память) | |
 | `GET /api/sessions/{id}/spectrum?x0&x1&max_pts&layers` | окно ≤ max_pts; `layers=raw,ions,probs` | `masses, ints, ion_id?, prob?, decimated, n_in_window, full_range, window_range` |
-| `POST /api/sessions/{id}/deisotope` | DeisotopeParams (тело может быть `{}` — дефолты нотебука) | `n_ions, ions[], elapsed_s, reused` |
+| `POST /api/sessions/{id}/deisotope` | DeisotopeParams (тело может быть `{}` — дефолты нотебука) | `n_ions, ions[], elapsed_s, params_hash` (всегда пересчёт, без кэша) |
 | `POST /api/sessions/{id}/elements` | `{"element": "Ir"}` | `rows: [{ion_id, mz, charge, n_peaks, prob}]` (отсортировано по prob desc), `skipped[]` |
 | `GET /api/sessions/{id}/knee?element=Ir` | | `probs` (sorted desc!), `threshold, knee_idx` |
 | `POST /api/sessions/{id}/threshold` | `{"element", "source": auto|manual, "manual_value"}` | `threshold, n_points_above, n_ions_above, mz_range` |

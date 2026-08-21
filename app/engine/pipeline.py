@@ -175,12 +175,6 @@ def deisotope(store, session_id: str, params: DeisotopeParams, deisotoper: MlDei
     key = params_hash(params)
 
     with session.lock:
-        cached = session.deisotope_cache.get(key)
-        if cached is not None:
-            out = dict(cached)
-            out["reused"] = True
-            return out
-
         t0 = time.time()
         try:
             labels, charge_states = deisotoper(
@@ -222,16 +216,13 @@ def deisotope(store, session_id: str, params: DeisotopeParams, deisotoper: MlDei
             "elapsed_s": round(elapsed, 3),
             "ions": ions,
         }
-        session.deisotope_cache[key] = result
         session.ion_id = labels.astype(np.int32)
         session.ion_info = ions
         session.ion_charge = ion_charge
         session.last_deisotope_hash = key
         session.log("info", f"deisotoping: {n_ions} ions in {elapsed:.2f}s "
                             f"(algorithm={params.algorithm}, z_max={params.z_max})")
-        out = dict(result)
-        out["reused"] = False
-        return out
+        return dict(result)
 
 
 # ---------------------------------------------------------------------- #
