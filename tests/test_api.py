@@ -199,21 +199,26 @@ def test_full_chain(api_client, session, gt_formulas):
                  params={"ion_id": ion_id, "formula": formula_str, "charge": -11}).status_code == 422
 
     # experimental trace (data[0]) uses the compare resolution: exact window
-    # whenever it fits COMPARE_HARD_MAX_PTS, so far above the legacy 2500;
-    # every matched peak (full-resolution, data[1]) must lie on the line
+    # whenever it fits COMPARE_HARD_MAX_PTS, so far above the legacy 2500
     from app.engine.downsample import COMPARE_HARD_MAX_PTS
     exp_x = fig["data"][0]["x"]
-    matched_x = fig["data"][1]["x"]
     assert len(exp_x) > 2500
     assert len(exp_x) <= COMPARE_HARD_MAX_PTS + 10_000  # + merged peak neighborhoods
-    exp_set = set(exp_x)
-    for mx in matched_x:
-        assert mx in exp_set, f"matched peak {mx} not on the experimental line"
+    # data[1] is the theoretical template: x = deisotopologues(isodistribution()),
+    # y proportional to the theoretical relative intensities (scaled to the
+    # experimental cluster base)
+    from mass_automation.formula.check_formula import del_isotopologues
+    t_x, t_y = del_isotopologues(*Formula(formula_str, charge=form["target_charge"]).isodistribution())
+    tpl_x, tpl_y = fig["data"][1]["x"], fig["data"][1]["y"]
+    assert tpl_x == [float(v) for v in t_x]
+    k = max(tpl_y) / max(t_y)
+    assert k > 0
+    assert all(abs(a - b * k) <= 1e-6 * max(1.0, b * k) for a, b in zip(tpl_y, t_y))
     # an explicit max_pts is still honoured (legacy behaviour)
     r2 = c.get(f"/api/sessions/{sid}/compare",
                params={"ion_id": ion_id, "formula": formula_str, "max_pts": 2500})
     assert r2.status_code == 200
-    assert len(r2.json()["data"][0]["x"]) <= 2500 + len(matched_x) * 200
+    assert len(r2.json()["data"][0]["x"]) <= 2500 + len(fig["data"][1]["x"]) * 200
 
     # session now reports completed steps
     meta = c.get(f"/api/sessions/{sid}").json()

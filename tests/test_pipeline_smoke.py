@@ -217,6 +217,10 @@ def test_empty_peak_indices_guard(models):
     assert r["n_ions"] == 1
 
 
+from mass_automation.formula import Formula as _Formula
+from mass_automation.formula.check_formula import del_isotopologues
+
+
 def test_compare_figure(full_run, small_spectrum):
     """Compare figure: experimental window keeps true relative intensities,
     point count is bounded, and the metrics (incl. delta) are annotated."""
@@ -229,13 +233,21 @@ def test_compare_figure(full_run, small_spectrum):
     assert len(data) >= 3
 
     exp = data[0]  # experimental trace, row 1
-    matched = data[1]
+    tpl = data[1]  # theoretical template markers, row 1
     # soft bound: uniform grid <= max_pts + merged matched-peak neighborhoods
-    assert len(exp["x"]) <= 2500 + len(matched["x"]) * 300
-    # every matched peak (full resolution) lies exactly on the experimental line
-    exp_set = set(exp["x"])
-    for mx in matched["x"]:
-        assert mx in exp_set
+    assert len(exp["x"]) <= 2500 + len(tpl["x"]) * 300
+    # the line keeps full resolution near every theoretical peak position
+    # (matched-peak neighborhoods are merged into the window)
+    for tx in tpl["x"]:
+        assert min(abs(ex - tx) for ex in exp["x"]) <= 0.02
+    # template heights are proportional to the theoretical relative intensities
+    ion_charge = full_run["deiso"]["ions"][best_ion]["charge"]
+    sign = -1 if full_run["sess"].polarity == "negative" else 1
+    t_x, t_y = del_isotopologues(*_Formula(formula_str, charge=sign * ion_charge).isodistribution())
+    assert tpl["x"] == [float(v) for v in t_x]
+    k = max(tpl["y"]) / max(t_y)
+    assert k > 0
+    assert all(abs(a - b * k) <= 1e-6 * max(1.0, b * k) for a, b in zip(tpl["y"], t_y))
     masses, ints = small_spectrum
     x0, x1 = min(exp["x"]), max(exp["x"])
     mask = (masses >= x0 - 1e-9) & (masses <= x1 + 1e-9)

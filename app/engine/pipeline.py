@@ -697,10 +697,19 @@ def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: Opti
                    hovertemplate="m/z %{x:.4f}<br>I %{y:.3g}<extra></extra>"),
         row=1, col=1,
     )
+    # Theoretical isotope template on the experimental row: circles at the
+    # theoretical positions, scaled so the theoretical base sits at the
+    # experimental cluster base (max of the matched peak intensities; window
+    # max if nothing matched) — deviations in m/z and intensity are visible
+    # directly against the raw spectrum.
+    scale = float(real_ints.max()) if real_ints.size else 0.0
+    if not scale > 0:
+        scale = float(window["ints"].max())
     fig.add_trace(
-        go.Scatter(x=real_masses.tolist(), y=real_ints.tolist(), mode="markers",
-                   name="Matched peaks", marker=dict(color="orange", size=7, line=dict(color="black", width=0.5)),
-                   hovertemplate="matched peak m/z %{x:.4f}<br>I %{y:.3g}<extra></extra>"),
+        go.Scatter(x=theo_masses.tolist(), y=[ti * scale for ti in theo_ints.tolist()],
+                   mode="markers", name="Theoretical template",
+                   marker=dict(color="orange", size=7, line=dict(color="black", width=0.5)),
+                   hovertemplate="theo peak m/z %{x:.4f}<br>I %{y:.3g}<extra></extra>"),
         row=1, col=1,
     )
     # --- row 2: calculated isotope pattern (same line style as row 1) --- #
