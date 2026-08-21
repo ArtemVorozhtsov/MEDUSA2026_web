@@ -611,7 +611,8 @@ def _merge_matched_points(
     return all_m[keep], all_i[keep]
 
 
-def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: Optional[int] = None) -> Dict[str, Any]:
+def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: Optional[int] = None,
+            charge: Optional[float] = None) -> Dict[str, Any]:
     session = store.get(session_id)
     if session.ion_id is None or not session.ion_info:
         raise PipelineError("run deisotoping (step 2) first", 400)
@@ -621,7 +622,9 @@ def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: Opti
         raise PipelineError("formula is empty", 400)
 
     ion = session.ion_info[ion_id]
-    target_charge = ion["charge"]
+    target_charge = ion["charge"] if charge is None else float(charge)
+    if not target_charge > 0:
+        raise PipelineError("charge must be positive", 400)
     try:
         formula = Formula(formula_str.strip(), charge=target_charge)
     except Exception as exc:  # noqa: BLE001

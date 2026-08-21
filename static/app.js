@@ -244,6 +244,7 @@ function resetDownstreamState() {
   $("#formulas-count").textContent = "";
   $("#csv-export-btn").disabled = true;
   $("#f-ion").value = 0;
+  $("#c-charge").value = 1;
   $("#compare-plot").hidden = true;
   const cmpEl = $("#compare-plot");
   if (cmpEl.data) Plotly.purge(cmpEl);
@@ -680,12 +681,20 @@ async function runFormulas() {
         (r.n_failed ? `, ${r.n_failed} check failures` : "") + `</span>`;
       $("#formulas-count").textContent = `(${r.n_valid})`;
       renderFormulasTable();
-      if (S.ranked.length) $("#c-formula").value = S.ranked[0].formula;
+      if (S.ranked.length) {
+        $("#c-formula").value = S.ranked[0].formula;
+        fillCompareCharge();
+      }
       $("#csv-export-btn").disabled = false;
     } catch (err) {
       toast(err.message, true);
     }
   });
+}
+
+function fillCompareCharge() {
+  const ion = S.ions[+$("#f-ion").value];
+  if (ion) $("#c-charge").value = ion.charge;
 }
 
 function renderFormulasTable() {
@@ -700,7 +709,10 @@ function renderFormulasTable() {
   $$("#formulas-table tbody tr").forEach((tr) =>
     (tr.onclick = () => {
       const row = S.ranked[+tr.dataset.rank - 1];
-      if (row) $("#c-formula").value = row.formula;
+      if (row) {
+        $("#c-formula").value = row.formula;
+        fillCompareCharge();
+      }
     }));
 }
 
@@ -723,15 +735,16 @@ function exportCSV() {
 async function runCompare() {
   const formula = $("#c-formula").value.trim();
   const ionId = +$("#f-ion").value;
+  const charge = +$("#c-charge").value || 1;
   await withBusy("compare", async () => {
     try {
       const fig = await api(
-        `/api/sessions/${S.session}/compare?ion_id=${ionId}&formula=${encodeURIComponent(formula)}`
+        `/api/sessions/${S.session}/compare?ion_id=${ionId}&charge=${charge}&formula=${encodeURIComponent(formula)}`
       );
       const el = $("#compare-plot");
       el.hidden = false;
       $("#compare-status").textContent =
-        `comparing ${formula} with ion ${ionId} (z=${S.ions[ionId] ? S.ions[ionId].charge : "?"})`;
+        `comparing ${formula} with ion ${ionId} (z=${charge})`;
       const layout2 = Object.assign({}, fig.layout,
         { height: Math.max(el.clientHeight || 0, 560) });
       const drawn = (el.data && el.data.length)

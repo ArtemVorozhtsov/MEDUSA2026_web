@@ -184,6 +184,13 @@ def test_full_chain(api_client, session, gt_formulas):
     assert "data" in fig and "layout" in fig
     assert len(fig["data"]) >= 2
 
+    # explicit charge override is accepted; invalid charge is rejected
+    r = c.get(f"/api/sessions/{sid}/compare",
+              params={"ion_id": ion_id, "formula": formula_str, "charge": 1})
+    assert r.status_code == 200, r.text
+    assert c.get(f"/api/sessions/{sid}/compare",
+                 params={"ion_id": ion_id, "formula": formula_str, "charge": 0}).status_code == 422
+
     # experimental trace (data[0]) uses the compare resolution: exact window
     # whenever it fits COMPARE_HARD_MAX_PTS, so far above the legacy 2500;
     # every matched peak (full-resolution, data[1]) must lie on the line

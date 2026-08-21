@@ -72,6 +72,7 @@ async def compare_endpoint(
     ion_id: int = Query(...),
     formula: str = Query(..., min_length=2),
     max_pts: Optional[int] = Query(None, ge=1, le=COMPARE_HARD_MAX_PTS),
+    charge: Optional[float] = Query(None, gt=0, le=10),
 ) -> dict:
     """Plotly figure: experimental window around the ion vs theoretical isotope pattern.
 
@@ -79,4 +80,4 @@ async def compare_endpoint(
     window whenever it fits ``COMPARE_HARD_MAX_PTS`` points.
     """
     return await run_cpu_job(request.app, compare,
-                             request.app.state.store, session_id, ion_id, formula, max_pts)
+                             request.app.state.store, session_id, ion_id, formula, max_pts, charge)

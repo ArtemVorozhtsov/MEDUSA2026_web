@@ -384,7 +384,7 @@ Dockerfile — symlink и селекторы игнора (`MEDUSA2026/mass_auto
 | `GET /api/sessions/{id}/knee?element=Ir` | | `probs` (sorted desc!), `threshold, knee_idx` |
 | `POST /api/sessions/{id}/threshold` | `{"element", "source": auto|manual, "manual_value"}` | `threshold, n_points_above, n_ions_above, mz_range` |
 | `POST /api/sessions/{id}/formulas` | `ion_id, elements {El: [lo, hi]}, mass_threshold_ppm, num_workers (1…16, иначе 422), max_chunk_size` | `ranked: [{rank, formula, mass, delta_ppm, cosine}], n_candidates, n_valid, n_failed, skipped_pct, elapsed_s, reused` |
-| `GET /api/sessions/{id}/compare?ion_id&formula[&max_pts]` | Plotly figure JSON; `max_pts` опционален (дефолт: точное окно ≤ 40k, иначе uniform step≥1) | `data[]` (exp, matched, vlines, подписи m/z), `layout.annotations` (2 заголовка сабплотов + блок метрик) |
+| `GET /api/sessions/{id}/compare?ion_id&formula[&charge][&max_pts]` | Plotly figure JSON; `max_pts` опционален (дефолт: точное окно ≤ 40k, иначе uniform step≥1) | `data[]` (exp, matched, vlines, подписи m/z), `layout.annotations` (2 заголовка сабплотов + блок метрик) |
 | `GET /api/formula_presets` | `ir_system`, `pubchem10`, `empty` | |
 | `GET /api/elements` | 118 символов `ELEMENT_DICT` (правильный case: Ir, Cl…) | |
 | `GET /healthz` | liveness + `models: {cgb, transformer}` + счётчики сессий | |

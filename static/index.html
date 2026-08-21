@@ -46,7 +46,8 @@
                formula to step 7.</li>
             <li><b>Compare with spectrum</b> — overlays the calculated isotopic pattern of the
                chosen formula on the experimental window: Δ (ppm), cosine distance and matched
-               peaks % are shown in the top-right box.</li>
+               peaks % are shown in the top-right box. The charge (z) defaults to 1 and is
+               pre-filled from the ion when a ranked row is clicked; override it if needed.</li>
           </ol>
           <p class="muted">Zoom: drag a rectangle or use the mouse wheel. Warnings (e.g. skipped
           ions) appear in the Log. <i>New session</i> clears all results. A 409
@@ -167,6 +168,7 @@
         <span class="spinner" data-spin="compare" hidden></span></div>
       <div class="row">
         <label>Formula <input id="c-formula" type="text" placeholder="C53H58N4O2Ir"></label>
+        <label>z <input id="c-charge" type="number" min="1" max="3" step="1" value="1" class="w4"></label>
         <button class="btn" data-run="compare">Run</button>
       </div>
     </div>
