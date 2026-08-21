@@ -200,7 +200,10 @@ def deisotope(store, session_id: str, params: DeisotopeParams, deisotoper: MlDei
         for i in range(n_ions):
             idx = np.where(labels == i)[0]
             base = idx[int(np.argmax(ints[idx]))]
-            ion_charge[i] = float(np.mean(charge_states[idx]))
+            # charge rule as in the core (FeatureLogger.get_distribution_statistics):
+            # the first unique charge over the distribution's points
+            uniq_charges = np.unique(charge_states[idx])
+            ion_charge[i] = float(uniq_charges[0]) if uniq_charges.size else 0.0
             ions.append({
                 "ion_id": i,
                 "mz": float(masses[base]),
