@@ -246,7 +246,7 @@ def classify_elements(store, session_id: str, params: ElementsParams, transforme
 
     with session.lock:
         cached = session.elements_cache.get(key)
-        if cached is not None:
+        if cached is not None and cached.get("for_deiso") == session.last_deisotope_hash:
             out = dict(cached)
             out["reused"] = True
             return out
@@ -282,6 +282,7 @@ def classify_elements(store, session_id: str, params: ElementsParams, transforme
             "element": params.element,
             "rows": rows,
             "skipped": skipped,
+            "for_deiso": session.last_deisotope_hash,
         }
         session.elements_cache[key] = result
         session.elements_element = params.element
@@ -375,6 +376,9 @@ def knee(store, session_id: str, element_symbol: str) -> Dict[str, Any]:
     session = store.get(session_id)
     if session.ion_probs is None:
         raise PipelineError("run element classification (step 3) first", 400)
+    if session.ion_probs_for_deiso != session.last_deisotope_hash:
+        raise PipelineError(
+            "element probabilities are stale for the current deisotoping; re-run step 3", 400)
     atomic = element_atomic_number(element_symbol)
 
     with session.lock:
@@ -409,6 +413,9 @@ def apply_threshold(store, session_id: str, params: ThresholdParams) -> Dict[str
     session = store.get(session_id)
     if session.ion_probs is None or session.ion_id is None:
         raise PipelineError("run deisotoping (step 2) and elements (step 3) first", 400)
+    if session.ion_probs_for_deiso != session.last_deisotope_hash:
+        raise PipelineError(
+            "element probabilities are stale for the current deisotoping; re-run step 3", 400)
     atomic = element_atomic_number(params.element)
 
     if params.source == "manual":
@@ -487,7 +494,7 @@ def formulas(store, session_id: str, params: FormulaParams) -> Dict[str, Any]:
     key = params_hash(params)
     with session.lock:
         cached = session.formulas_cache.get(key)
-        if cached is not None:
+        if cached is not None and cached.get("for_deiso") == session.last_deisotope_hash:
             out = dict(cached)
             out["reused"] = True
             return out
@@ -556,6 +563,7 @@ def formulas(store, session_id: str, params: FormulaParams) -> Dict[str, Any]:
         "skipped_pct": float(skipped_pct),
         "elapsed_s": round(time.time() - t0, 3),
         "ranked": ranked,
+        "for_deiso": session.last_deisotope_hash,
     }
     with session.lock:
         session.formulas_cache[key] = result

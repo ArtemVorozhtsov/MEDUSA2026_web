@@ -261,6 +261,56 @@ def test_upload_purge_on_session_reset(api_client, small_spectrum):
     assert not (upload_dir / file_id2).exists(), "upload must be purged when the flag is on"
 
 
+def test_redeisotope_invalidates_downstream(api_client, spectrum_file):
+    """Changing deisotoping parameters invalidates steps 3-6 results."""
+    c = api_client
+    r = c.post("/api/sessions", json={"source": "folder", "path": spectrum_file})
+    assert r.status_code == 200, r.text
+    sid = r.json()["session_id"]
+
+    def deiso(**overrides):
+        body = {"algorithm": "adaptive", "z_max": 3, "threshold": 0.15,
+                "delta": 0.007, "min_distance": 0.01, "n1": 2, "n2": 6}
+        body.update(overrides)
+        resp = c.post(f"/api/sessions/{sid}/deisotope", json=body)
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    FORMULAS_BODY = lambda: {
+        "ion_id": 0, "elements": {k: list(v) for k, v in SMALL_ELEMENT_SPACE.items()},
+        "mass_threshold_ppm": 4.0, "num_workers": 1,
+    }
+
+    deiso()
+    assert c.post(f"/api/sessions/{sid}/elements", json={"element": "Ir"}).status_code == 200
+    assert c.post(f"/api/sessions/{sid}/threshold",
+                  json={"element": "Ir", "source": "auto", "manual_value": None}).status_code == 200
+    fr = c.post(f"/api/sessions/{sid}/formulas", json=FORMULAS_BODY())
+    assert fr.status_code == 200, fr.text
+    assert fr.json()["reused"] is False
+
+    # re-deisotope with different parameters: same ion ids are now different ions
+    d2 = deiso(min_distance=0.05)
+    assert d2["reused"] is False
+
+    # step 4 must refuse to run on stale probabilities
+    r = c.post(f"/api/sessions/{sid}/threshold",
+               json={"element": "Ir", "source": "auto", "manual_value": None})
+    assert r.status_code == 400
+
+    # step 6 must recompute (cache entry belongs to the old ion set)
+    fr = c.post(f"/api/sessions/{sid}/formulas", json=FORMULAS_BODY())
+    assert fr.status_code == 200, fr.text
+    assert fr.json()["reused"] is False
+
+    # step 3 recomputes, after which step 4 works again
+    e = c.post(f"/api/sessions/{sid}/elements", json={"element": "Ir"})
+    assert e.status_code == 200, e.text
+    assert e.json()["reused"] is False
+    assert c.post(f"/api/sessions/{sid}/threshold",
+                  json={"element": "Ir", "source": "auto", "manual_value": None}).status_code == 200
+
+
 def test_error_handling(api_client, session, spectrum_file):
     c = api_client
     sid = session["session_id"]

@@ -153,8 +153,11 @@ session (app/state.py)  — массы/интенсивности, ion_id, ion_p
   Порядок поиска моделей: env → `/app/models` (image) → dev-checkout.
 - **`app/state.py`** — `Session` (одна сессия = один mzXML, первый скан):
   float64 `masses`/`ints`, объект `Spectrum`, кэши шагов
-  (`deisotope_cache`, `elements_cache`, `knee_cache`, `formulas_cache`),
-  `ion_probs` (n_ions × 119), `point_probs` (на точку, для подсветки),
+  (`deisotope_cache`, `elements_cache`, `knee_cache`, `formulas_cache`;
+  кэши шагов 3–6 метятся `for_deiso` — хешем текущей деизотопии, и
+  инвалидируются при её перезапуске с другими параметрами),
+  `ion_probs` (n_ions × 119, `ion_probs_for_deiso` — хеш, для которой
+  посчитана), `point_probs` (на точку, для подсветки),
   лог-буфер (deque 200), `threading.Lock`. `SessionStore` — dict + лимит
   активных сессий (409) + LRU-метки; при delete обнуляет ссылки на большие
   массивы (свободит память). **Всё состояние в памяти процесса** → рестарт
@@ -512,7 +515,11 @@ cd medusa_web && docker compose run --rm web pytest medusa_web/tests -q
    на 3.9 всегда отменяет acquire (gate всегда «free»).
 8. **`params_hash`** — кэши шагов хеширует **все** параметры dataclass; если
    добавить поле в params — кэши автоматически изменят поведение. Не хэшировать
-   вручную отдельные поля.
+   вручную отдельные поля. Кроме того, результаты шагов 3–6 привязаны к
+   текущей деизотопии (`for_deiso` = `last_deisotope_hash`): повторный запуск
+   шага 2 с другими параметрами инвалидирует кэши `elements_cache`/`formulas_cache`
+   и `knee_cache`, а `apply_threshold`/`knee` на устаревших `ion_probs`
+   отвечают 400 «re-run step 3».
 9. **`ion_probs` — 119 столбцов, а не 118**: `ELEMENT_DICT` даёт 118 имён,
    чекпоинт обучен на `output_dim=119`. Столбец `atomic-1`. Не «исправлять»
    размерность под словарь.

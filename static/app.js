@@ -203,6 +203,26 @@ async function onSessionCreated(data) {
   $("#spectrum-status").textContent = windowStatusText();
 }
 
+function resetPostDeisotopeState() {
+  // invalidate results that were computed from the previous ion set
+  S.ionProbs = {}; S.threshold = null; S.knee = null; S.ranked = null;
+  $("#elements-summary").hidden = true;
+  $("#layer-probs").checked = false;
+  $("#highlight-summary").hidden = true;
+  $("#zoom-highlighted-btn").disabled = true;
+  $("#knee-summary").hidden = true;
+  $("#formulas-summary").hidden = true;
+  $("#formulas-table tbody").innerHTML = "";
+  $("#formulas-count").textContent = "";
+  $("#csv-export-btn").disabled = true;
+  const kneeEl = $("#knee-plot");
+  if (kneeEl.data) Plotly.purge(kneeEl);
+  $("#compare-plot").hidden = true;
+  const cmpEl = $("#compare-plot");
+  if (cmpEl.data) Plotly.purge(cmpEl);
+  $("#compare-status").textContent = "step 7 result appears here";
+}
+
 function resetDownstreamState() {
   S.ions = []; S.ionProbs = {}; S.selectedIon = null; S.threshold = null;
   S.knee = null; S.ranked = null; S.window = null;
@@ -417,6 +437,7 @@ async function runDeisotope() {
     try {
       const r = await api(`/api/sessions/${S.session}/deisotope`, { method: "POST", body });
       S.ions = r.ions;
+      if (!r.reused) resetPostDeisotopeState();
       renderLogs(r.logs);
       $("#deiso-summary").hidden = false;
       $("#deiso-summary").innerHTML =
@@ -431,7 +452,10 @@ async function runDeisotope() {
         $("#f-ion").value = best.ion_id;
         S.selectedIon = best.ion_id;
       }
-      renderSpectrum();
+      // the per-point ion assignments changed: refetch the window so the ion
+      // layer and hover annotations are drawn from the new deisotoping
+      if (currentRange) refreshWindow(currentRange[0], currentRange[1]);
+      else renderSpectrum();
     } catch (err) {
       toast(err.message, true);
     }
