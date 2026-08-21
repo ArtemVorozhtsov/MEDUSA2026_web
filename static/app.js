@@ -327,7 +327,7 @@ function renderSpectrum() {
     if (xs.length) {
       traces.push({
         x: xs, y: ys, mode: "markers",
-        name: `P(${S.threshold.element}) > ${S.threshold.threshold}`,
+        name: `P(${S.threshold.element}) > ${S.threshold.threshold.toExponential(2)}`,
         marker: { color: "#e03131", size: 4, opacity: 0.85 },
         showlegend: true,
         hovertemplate: `m/z %{x:.4f}<br>I %{y:.3g}<br>P %{customdata:.4f}<extra></extra>`,
