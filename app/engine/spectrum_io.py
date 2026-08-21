@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from typing import Dict, List
 
@@ -14,6 +15,39 @@ logger = logging.getLogger("medusa_web.spectrum_io")
 
 SPECTRA_EXTENSIONS = (".mzxml",)
 MAX_LIST_DEPTH = 3
+
+# The mzXML <polarity> marker always lives near the start of the file
+# (instrumentConfiguration or the first scan), so a bounded prefix scan suffices.
+POLARITY_SCAN_BYTES = 2 * 1024 * 1024
+_POLARITY_RE = re.compile(
+    rb"<polarity>\s*(positive|negative|unknown|\+|-|1|-1)\s*</polarity>"
+    rb"|polarity\s*=\s*[\x22\x27](positive|negative|unknown|\+|-|1|-1)[\x22\x27]",
+    re.IGNORECASE,
+)
+
+
+def detect_polarity(path: str) -> str:
+    """Detect the ion polarity from the first ``<polarity>`` marker in the file.
+
+    Handles the standard child-element form (``<scan><polarity>negative</polarity>``
+    or ``<instrumentConfiguration><polarity>\u2026``) and the attribute form
+    (``<scan polarity="+" \u2026>``) used by some exporters. Returns ``"positive"``,
+    ``"negative"`` or ``"unknown"``.
+    """
+    try:
+        with open(path, "rb") as f:
+            chunk = f.read(POLARITY_SCAN_BYTES)
+    except OSError:
+        return "unknown"
+    m = _POLARITY_RE.search(chunk)
+    if m is None:
+        return "unknown"
+    value = (m.group(1) or m.group(2)).decode("ascii").lower()
+    if value in ("positive", "+", "1"):
+        return "positive"
+    if value in ("negative", "-", "-1"):
+        return "negative"
+    return "unknown"
 
 
 def list_spectra_files(root: str) -> List[Dict[str, object]]:
@@ -76,6 +110,7 @@ def load_spectrum(path: str) -> Dict[str, object]:
         "mz_max": float(masses.max()),
         "n_scans": int(experiment.len),
         "load_time_s": round(time.time() - t0, 3),
+        "polarity": detect_polarity(path),
     }
     logger.info(
         "loaded %s: %d points, m/z %.2f..%.2f, %d scan(s), %.2fs",

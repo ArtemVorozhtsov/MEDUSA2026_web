@@ -72,7 +72,7 @@ async def compare_endpoint(
     ion_id: int = Query(...),
     formula: str = Query(..., min_length=2),
     max_pts: Optional[int] = Query(None, ge=1, le=COMPARE_HARD_MAX_PTS),
-    charge: Optional[float] = Query(None, gt=0, le=10),
+    charge: Optional[float] = Query(None, ge=-10, le=10),
 ) -> dict:
     """Plotly figure: experimental window around the ion vs theoretical isotope pattern.
 

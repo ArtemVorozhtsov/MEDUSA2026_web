@@ -184,12 +184,19 @@ def test_full_chain(api_client, session, gt_formulas):
     assert "data" in fig and "layout" in fig
     assert len(fig["data"]) >= 2
 
-    # explicit charge override is accepted; invalid charge is rejected
+    # explicit charge override is accepted (incl. negative); zero/out-of-range rejected
     r = c.get(f"/api/sessions/{sid}/compare",
               params={"ion_id": ion_id, "formula": formula_str, "charge": 1})
     assert r.status_code == 200, r.text
+    r = c.get(f"/api/sessions/{sid}/compare",
+              params={"ion_id": ion_id, "formula": formula_str, "charge": -1})
+    assert r.status_code == 200, r.text
+    zero = c.get(f"/api/sessions/{sid}/compare",
+                 params={"ion_id": ion_id, "formula": formula_str, "charge": 0})
+    assert zero.status_code == 400
+    assert "nonzero" in zero.json()["detail"]
     assert c.get(f"/api/sessions/{sid}/compare",
-                 params={"ion_id": ion_id, "formula": formula_str, "charge": 0}).status_code == 422
+                 params={"ion_id": ion_id, "formula": formula_str, "charge": -11}).status_code == 422
 
     # experimental trace (data[0]) uses the compare resolution: exact window
     # whenever it fits COMPARE_HARD_MAX_PTS, so far above the legacy 2500;
@@ -395,3 +402,62 @@ def test_session_limit(api_client, spectrum_file):
     assert c.delete(f"/api/sessions/{created[0]}").status_code == 200
     r = c.post("/api/sessions", json={"source": "folder", "path": spectrum_file})
     assert r.status_code == 200
+
+
+def test_polarity_detection_override_and_negative_charge(api_client, small_spectrum, gt_formulas):
+    from app.config import get_settings
+    from mass_automation.formula import ELECTRON_MASS, Formula
+
+    masses, ints = small_spectrum
+    path = Path(get_settings().spectra_dir) / "neg.mzXML"
+    write_mzxml(path, masses, ints, polarity="negative")
+    r = api_client.post("/api/sessions", json={"source": "folder", "path": "neg.mzXML"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["polarity"] == "negative"
+    assert body["polarity_source"] == "file"
+    sid = body["session_id"]
+
+    # manual override, validation, persistence in the session summary
+    r = api_client.post(f"/api/sessions/{sid}/polarity", json={"polarity": "positive"})
+    assert r.status_code == 200
+    assert r.json() == {"polarity": "positive", "polarity_source": "manual"}
+    assert api_client.post(f"/api/sessions/{sid}/polarity",
+                           json={"polarity": "both"}).status_code == 422
+    assert api_client.get(f"/api/sessions/{sid}").json()["polarity"] == "positive"
+
+    # back to negative: deisotoping + formulas must use the signed charge
+    api_client.post(f"/api/sessions/{sid}/polarity", json={"polarity": "negative"})
+    r = api_client.post(f"/api/sessions/{sid}/deisotope", json={
+        "algorithm": "adaptive", "z_max": 3, "min_distance": 0.01,
+        "threshold": 0.15, "delta": 0.007, "n1": 2, "n2": 6,
+    })
+    assert r.status_code == 200, r.text
+    deiso = r.json()
+    r = api_client.post(f"/api/sessions/{sid}/formulas", json={
+        "ion_id": 0, "elements": {k: list(v) for k, v in SMALL_ELEMENT_SPACE.items()},
+        "mass_threshold_ppm": 10.0, "num_workers": 1,
+    })
+    assert r.status_code == 200, r.text
+    form = r.json()
+    tc = form["target_charge"]
+    assert tc < 0
+    assert abs(form["target_mass"] - (abs(tc) * form["target_mz"] + tc * ELECTRON_MASS)) < 1e-9
+    gt_dict = {k: int(v) for k, v in Formula(gt_formulas[0]["formula"]).dict_formula.items() if int(v) > 0}
+    found = [row for row in form["ranked"]
+             if {k: int(v) for k, v in Formula(row["formula"]).dict_formula.items() if int(v) > 0} == gt_dict]
+    assert found, "GT formula missing from ranked list (negative polarity)"
+
+    # compare: default charge follows the session polarity; explicit negative works
+    formula_str = found[0]["formula"]
+    z_exp = f"z = {-int(deiso['ions'][0]['charge'])}"
+    r = api_client.get(f"/api/sessions/{sid}/compare",
+                       params={"ion_id": 0, "formula": formula_str})
+    assert r.status_code == 200, r.text
+    layout = r.json()["layout"]
+    texts = [a.get("text", "") for a in layout.get("annotations", [])]
+    texts.append((layout.get("title") or {}).get("text", ""))
+    assert any(z_exp in t for t in texts)
+    r = api_client.get(f"/api/sessions/{sid}/compare",
+                       params={"ion_id": 0, "formula": formula_str, "charge": -1})
+    assert r.status_code == 200, r.text

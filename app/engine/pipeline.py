@@ -50,6 +50,11 @@ logger = logging.getLogger("medusa_web.pipeline")
 N_ELEMENTS = 119
 
 
+def _charge_sign(session: Session) -> int:
+    """Sign of the ion charge for mass-based steps (6: target mass, 7: compare)."""
+    return -1 if session.polarity == "negative" else 1
+
+
 # ---------------------------------------------------------------------- #
 # Parameters (defaults = entry.ipynb values)
 # ---------------------------------------------------------------------- #
@@ -495,8 +500,10 @@ def formulas(store, session_id: str, params: FormulaParams) -> Dict[str, Any]:
 
     ion = session.ion_info[params.ion_id]
     target_mz = ion["mz"]
-    target_charge = ion["charge"]
-    target_mass = (target_mz + ELECTRON_MASS) * target_charge
+    # signed charge: the neutral mass behind m/z is |z|*m/z + z*m_e (core
+    # convention: Formula.monoisotopic_mass = (M - z*m_e)/|z|); sign = polarity
+    target_charge = _charge_sign(session) * float(ion["charge"])
+    target_mass = abs(target_charge) * target_mz + target_charge * ELECTRON_MASS
 
     workers = max(1, min(params.num_workers, MAX_FORMULA_WORKERS))
     t0 = time.time()
@@ -622,9 +629,12 @@ def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: Opti
         raise PipelineError("formula is empty", 400)
 
     ion = session.ion_info[ion_id]
-    target_charge = ion["charge"] if charge is None else float(charge)
-    if not target_charge > 0:
-        raise PipelineError("charge must be positive", 400)
+    if charge is None:
+        target_charge = _charge_sign(session) * float(ion["charge"])
+    else:
+        target_charge = float(charge)
+    if not 0 < abs(target_charge) <= 10:
+        raise PipelineError("charge must be nonzero with |z| <= 10", 400)
     try:
         formula = Formula(formula_str.strip(), charge=target_charge)
     except Exception as exc:  # noqa: BLE001

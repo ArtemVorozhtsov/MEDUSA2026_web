@@ -181,7 +181,10 @@ session (app/state.py)  — массы/интенсивности, ion_id, ion_p
 - **`app/engine/spectrum_io.py`** — `Experiment(path, verbose=False)`, берётся
   **первый скан** (мультискан-файлы: `n_scans` показывается в UI, остальные
   сканы игнорируются — решение №3 задачи). Листинг файлов: `*.mzXML`,
-  глубина ≤ 3, относительные пути + размеры.
+  глубина ≤ 3, относительные пути + размеры. `detect_polarity(path)` —
+  префикс-скан первых 2 МБ в поиске маркера `<polarity>` (внук `<scan>`
+  или `<instrumentConfiguration>`, либо атрибут `polarity="…"`) →
+  `positive`/`negative`/`unknown`.
 - **`app/engine/downsample.py`** — два алгоритма (см. §7).
 
 ### 4.3 Сессии и кэши
@@ -198,6 +201,13 @@ session (app/state.py)  — массы/интенсивности, ion_id, ion_p
   автоматически; `ion_probs` (полная классификация по всем 119 элементам)
   считается один раз на деизотопирование, смена «активного элемента» — просто
   выборка столбца.
+- **Поларность** (знак заряда иона) — определяется при загрузке спектра
+  (`detect_polarity`): найдена в файле → `polarity_source = "file"`,
+  не найдена → `positive` (source `default`). Это единственный источник знака
+  заряда в шагах 6–7 (`target_charge = ±ion_charge`; в шаге 7 ручной `charge`
+  переопределяет). Ручное переопределение — `POST /api/sessions/{id}/polarity`
+  (source `manual`, очищает `formulas_cache`); в UI — селект «Polarity» в шаге 6
+  (смена сбрасывает результаты шагов 6–7).
 
 ---
 
@@ -205,13 +215,13 @@ session (app/state.py)  — массы/интенсивности, ion_id, ion_p
 
 | Шаг | Функция | Что делает | Ключевые детали |
 |---|---|---|---|
-| 1 | `load_spectrum` | `Experiment()` → скан 0 → `masses`/`ints` float64 + `Spectrum` | ~1.5 с на 8M точек |
+| 1 | `load_spectrum` | `Experiment()` → скан 0 → `masses`/`ints` float64 + `Spectrum`; `detect_polarity` по префиксу файла | ~1.5 с на 8M точек |
 | 2 | `deisotope` | `MlDeisotoper().load(CGB_MODEL)(spectrum, algorithm, z_max, min_distance, threshold, delta, n1, n2)` | дефолты = нотебук: `adaptive, z_max=3, 0.01, 0.15, 0.007, n1=2, n2=6`; на выходе `ion_id` на точку (-1 = шум) + `ion_info` (m/z **base peak = argmax интенсивности**, заряд = первый unique-z по точкам (как в ядре), n_peaks); шаг **не кэшируется** — быстрый, каждый Run пересчитывает |
 | 3 | `classify_elements` | по каждому иону: `RealIsotopicDistribution.get_representation(f=np.mean, mode="middle", length=101)` → `center_representation(repr, mass, charge_mean)` → нормировка на глобальный max → forward Transformer (батч (n_ions, seq, 100)) → sigmoid | **input_dim=100** (get_representation length=101 → vectorize отбрасывает центр → n_bins−1=100), **output_dim=119** = `N_ELEMENTS`; столбец c ↔ атомный номер c+1 (`ELEMENT_DICT` — 118 имён, у модели класс на один больше); каждый ион в try/except — см. §6 |
 | 4 | `knee` | `find_knee_threshold_numpy` (локальная копия утилиты нотебука — без import-path coupling в `research/`): точка, дальше всех от хорды (0,max)→(N,min) **в отсортированном по убыванию** массиве | API возвращает `probs` **отсортированными desc**; `knee_idx` — позиция в отсортированном массиве (чарт в UI рисует ровно это) |
 | 5 | `apply_threshold` | `source=auto` (knee) или `manual` (manual_value∈(0,1)); строит `point_probs` (на точку через ion_id) | результат — слой подсветки в вьювере («красные точки») |
-| 6 | `formulas` | `target_mass = (mz_base + ELECTRON_MASS)·charge`; `formula_generator_parallel(ELEMENTS, low/high_limits, target_mass, threshold_ppm, num_workers, max_chunk_size, mode="max")` → каждый кандидат: `Formula(...) + check_presence` в `joblib.Parallel(n_jobs=num_workers, loky)` (num_workers ограничен `MAX_FORMULA_WORKERS = 16`, как и генерация) → ранжирование **cosine desc, потом delta asc** | `cosine = 1 − cosine_distance` (сходство); ошибки генератора/валидации → 4xx/5xx с сообщением, никогда не «тихо пусто» |
-| 7 | `compare` | окно `[theo_masses[0]−1, theo_masses[−1]+1]`; `Formula.isodistribution()` + `del_isotopologues` + `check_presence` → Plotly-фигура 2×1 | окно — `uniform_window` (формосохраняющий), не peak-preserving; окно небольшое и фиксировано сервером → уходит **точным** (недексимированным), пока ≤ `COMPARE_HARD_MAX_PTS` (40k), иначе uniform step≥1 **+ merge сырых окрестностей ±0.01 Da вокруг matched-пиков** — линия гарантированно проходит через все matched-пики (см. §7); стиль calculated = вертикали 0→rel.intensity + m/z-подписи (как в `plot_compare`); метрики (Δ, cos. dist., matched %) — в рамке справа сверху |
+| 6 | `formulas` | подписанный заряд (знак = поларность сессии): `target_charge = ±ion_charge`, `target_mass = |z|·mz_base + z·ELECTRON_MASS` (соответствует ядру: `Formula.monoisotopic_mass = (M − z·m_e)/|z|`); `formula_generator_parallel(ELEMENTS, low/high_limits, target_mass, threshold_ppm, num_workers, max_chunk_size, mode="max")` → каждый кандидат: `Formula(...) + check_presence` в `joblib.Parallel(n_jobs=num_workers, loky)` (num_workers ограничен `MAX_FORMULA_WORKERS = 16`, как и генерация) → ранжирование **cosine desc, потом delta asc** | `cosine = 1 − cosine_distance` (сходство); ошибки генератора/валидации → 4xx/5xx с сообщением, никогда не «тихо пусто» |
+| 7 | `compare` | подписанный `charge` (дефолт = заряд иона × поларность сессии; 0 или |z|>10 → 4xx); окно `[theo_masses[0]−1, theo_masses[−1]+1]`; `Formula.isodistribution()` + `del_isotopologues` + `check_presence` → Plotly-фигура 2×1 | окно — `uniform_window` (формосохраняющий), не peak-preserving; окно небольшое и фиксировано сервером → уходит **точным** (недексимированным), пока ≤ `COMPARE_HARD_MAX_PTS` (40k), иначе uniform step≥1 **+ merge сырых окрестностей ±0.01 Da вокруг matched-пиков** — линия гарантированно проходит через все matched-пики (см. §7); стиль calculated = вертикали 0→rel.intensity + m/z-подписи (как в `plot_compare`); метрики (Δ, cos. dist., matched %) — в рамке справа сверху |
 
 ## 6. Guards против известных (латентных) багов ядра
 
@@ -375,7 +385,8 @@ Dockerfile — symlink и селекторы игнора (`MEDUSA2026/mass_auto
 |---|---|---|
 | `GET /api/files` | список `*.mzXML` под `SPECTRA_DIR` (глубина ≤3) | `files: [{path, name, size}]` |
 | `POST /api/upload` | multipart, ≤ `MAX_UPLOAD_MB` | `file_id` (10 hex + исходное имя) |
-| `POST /api/sessions` | `{"source": "folder"|"upload", "path"|"file_id"}`; защита от path traversal (realpath-префикс) | `session_id, n_points, mz_range, n_scans, load_time_s, logs` |
+| `POST /api/sessions` | `{"source": "folder"|"upload", "path"|"file_id"}`; защита от path traversal (realpath-префикс) | `session_id, n_points, mz_range, n_scans, load_time_s, polarity, polarity_source, logs` |
+| `POST /api/sessions/{id}/polarity` | `{"polarity": "positive"|"negative"}` — ручное переопределение знака заряда (инвалидирует кэш формул) | `polarity, polarity_source` ("manual") |
 | `GET /api/sessions/{id}` | метаданные + `completed_steps` | |
 | `DELETE /api/sessions/{id}` | удалить (освобождает память) | |
 | `GET /api/sessions/{id}/spectrum?x0&x1&max_pts&layers` | окно ≤ max_pts; `layers=raw,ions,probs` | `masses, ints, ion_id?, prob?, decimated, n_in_window, full_range, window_range` |
@@ -383,8 +394,8 @@ Dockerfile — symlink и селекторы игнора (`MEDUSA2026/mass_auto
 | `POST /api/sessions/{id}/elements` | `{"element": "Ir"}` | `rows: [{ion_id, mz, charge, n_peaks, prob}]` (отсортировано по prob desc), `skipped[]` |
 | `GET /api/sessions/{id}/knee?element=Ir` | | `probs` (sorted desc!), `threshold, knee_idx` |
 | `POST /api/sessions/{id}/threshold` | `{"element", "source": auto|manual, "manual_value"}` | `threshold, n_points_above, n_ions_above, mz_range` |
-| `POST /api/sessions/{id}/formulas` | `ion_id, elements {El: [lo, hi]}, mass_threshold_ppm, num_workers (1…16, иначе 422), max_chunk_size` | `ranked: [{rank, formula, mass, delta_ppm, cosine}], n_candidates, n_valid, n_failed, skipped_pct, elapsed_s, reused` |
-| `GET /api/sessions/{id}/compare?ion_id&formula[&charge][&max_pts]` | Plotly figure JSON; `max_pts` опционален (дефолт: точное окно ≤ 40k, иначе uniform step≥1) | `data[]` (exp, matched, vlines, подписи m/z), `layout.annotations` (2 заголовка сабплотов + блок метрик) |
+| `POST /api/sessions/{id}/formulas` | `ion_id, elements {El: [lo, hi]}, mass_threshold_ppm, num_workers (1…16, иначе 422), max_chunk_size` | `ranked: [{rank, formula, mass, delta_ppm, cosine}], n_candidates, n_valid, n_failed, skipped_pct, elapsed_s, reused, target_mz, target_charge (подписанный), target_mass` |
+| `GET /api/sessions/{id}/compare?ion_id&formula[&charge][&max_pts]` | `charge` — подписанный (−10..10; дефолт = заряд иона × поларность, 0 → 400, |z|>10 → 422); Plotly figure JSON; `max_pts` опционален (дефолт: точное окно ≤ 40k, иначе uniform step≥1) | `data[]` (exp, matched, vlines, подписи m/z), `layout.annotations` (2 заголовка сабплотов + блок метрик; `z = ±N`) |
 | `GET /api/formula_presets` | `ir_system`, `pubchem10`, `empty` | |
 | `GET /api/elements` | 118 символов `ELEMENT_DICT` (правильный case: Ir, Cl…) | |
 | `GET /healthz` | liveness + `models: {cgb, transformer}` + счётчики сессий | |

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
@@ -74,6 +74,8 @@ async def create_session(body: SessionCreate, request: Request) -> dict:
         "mz_range": [data["mz_min"], data["mz_max"]],
         "n_scans": data["n_scans"],
         "load_time_s": data["load_time_s"],
+        "polarity": session.polarity,
+        "polarity_source": session.polarity_source,
         "logs": session.recent_logs(),
     }
 
@@ -82,6 +84,19 @@ async def create_session(body: SessionCreate, request: Request) -> dict:
 def get_session(request: Request, session_id: str) -> dict:
     session = request.app.state.store.get(session_id)
     return {**session.summary(), "logs": session.recent_logs()}
+
+
+class PolarityIn(BaseModel):
+    polarity: Literal["positive", "negative"]
+
+
+@router.post("/sessions/{session_id}/polarity")
+def set_session_polarity(session_id: str, body: PolarityIn, request: Request) -> dict:
+    """Override the ion polarity (charge sign) used by steps 6-7."""
+    session = request.app.state.store.get(session_id)
+    session.set_polarity(body.polarity)
+    session.log("info", f"polarity set to {body.polarity} (manual override)")
+    return {"polarity": session.polarity, "polarity_source": session.polarity_source}
 
 
 def _purge_upload_if_configured(settings, session) -> None:

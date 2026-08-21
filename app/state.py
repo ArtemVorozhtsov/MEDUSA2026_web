@@ -48,6 +48,7 @@ class Session:
         "id", "file_name", "source", "path",
         "masses", "ints", "spectrum",
         "n_points", "mz_min", "mz_max", "n_scans", "load_time_s",
+        "polarity", "polarity_source",
         "created_at", "last_access",
         "logs", "lock",
         # step 2: deisotoping
@@ -75,6 +76,10 @@ class Session:
         self.mz_max: Optional[float] = None
         self.n_scans: Optional[int] = None
         self.load_time_s: Optional[float] = None
+        # effective ion polarity ("positive"/"negative"); polarity_source:
+        # "file" (read from mzXML), "default" (no tag in the file), "manual"
+        self.polarity = "positive"
+        self.polarity_source = "default"
 
         self.created_at = time.time()
         self.last_access = self.created_at
@@ -117,9 +122,21 @@ class Session:
         self.mz_max = data["mz_max"]
         self.n_scans = data["n_scans"]
         self.load_time_s = data["load_time_s"]
+        detected = data.get("polarity", "unknown")
+        if detected in ("positive", "negative"):
+            self.polarity, self.polarity_source = detected, "file"
+        else:
+            self.polarity, self.polarity_source = "positive", "default"
 
     def is_loaded(self) -> bool:
         return self.masses is not None
+
+    def set_polarity(self, value: str) -> None:
+        """Manual polarity override; invalidates formula results (mass from m/z)."""
+        self.polarity = value
+        self.polarity_source = "manual"
+        with self.lock:
+            self.formulas_cache.clear()
 
     # ------------------------------------------------------------------ #
     def summary(self) -> Dict[str, Any]:
@@ -132,6 +149,8 @@ class Session:
             "mz_range": [self.mz_min, self.mz_max],
             "n_scans": self.n_scans,
             "load_time_s": self.load_time_s,
+            "polarity": self.polarity,
+            "polarity_source": self.polarity_source,
             "created_at": self.created_at,
             "n_ions": len(self.ion_info) if self.ion_id is not None else None,
             "element": self.elements_element,

@@ -86,7 +86,7 @@ def load_gt_formulas() -> list:
     return gt
 
 
-def write_mzxml(path, masses: np.ndarray, ints: np.ndarray) -> Path:
+def write_mzxml(path, masses: np.ndarray, ints: np.ndarray, polarity: str = "+") -> Path:
     """Write a minimal mzXML (sashimi 3.2 namespace) readable by pyopenms 3.2.
 
     Structure mirrors real instrument exports: zlib-compressed interleaved
@@ -104,7 +104,7 @@ def write_mzxml(path, masses: np.ndarray, ints: np.ndarray) -> Path:
         '       xsi:schemaLocation="http://sashimi.sourceforge.net/schema_revision/mzXML_3.2'
         ' http://sashimi.sourceforge.net/schema_revision/mzXML_3.2/mzXML_idx_3.2.xsd">\n'
         f'  <msRun scanCount="1">\n'
-        f'    <scan num="1" scanType="Full" centroided="1" msLevel="1" peaksCount="{n}" polarity="+"\n'
+        f'    <scan num="1" scanType="Full" centroided="1" msLevel="1" peaksCount="{n}" polarity="{polarity}"\n'
         f'          startMz="{float(masses.min()):.6f}" endMz="{float(masses.max()):.6f}">\n'
         f'      <peaks compressionType="zlib" compressedLen="{len(b64)}" precision="64"'
         f' byteOrder="network" contentType="m/z-int">{b64}</peaks>\n'

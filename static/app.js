@@ -7,6 +7,7 @@
 const S = {
   session: null,          // session_id
   fileInfo: null,         // {file_name, n_points, mz_range, load_time_s}
+  polarity: null,         // "positive" | "negative" (effective session polarity)
   ions: [],               // [{ion_id, mz, charge, n_peaks, mz_min, mz_max}]
   lastDeisotopeHash: null,// params_hash of the last deisotoping (null = none yet)
   ionProbs: {},           // ion_id -> prob (selected element)
@@ -190,6 +191,8 @@ async function onSessionCreated(data) {
     mz_range: data.mz_range, load_time_s: data.load_time_s,
   };
   resetDownstreamState();
+  S.polarity = data.polarity || "positive";
+  $("#f-polarity").value = S.polarity;
   updateHeader();
   renderLogs(data.logs);
   $("#load-summary").hidden = false;
@@ -198,6 +201,9 @@ async function onSessionCreated(data) {
     `points: ${data.n_points.toLocaleString()}<br>` +
     `m/z: ${data.mz_range[0].toFixed(2)} – ${data.mz_range[1].toFixed(2)}<br>` +
     `load: ${data.load_time_s}s` +
+    `<br>polarity: ${data.polarity}` +
+    (data.polarity_source === "default" ? ` <span class="muted">(default)</span>`
+     : data.polarity_source === "file" ? ` <span class="muted">(from mzXML)</span>` : "") +
     (data.n_scans > 1 ? `<br><span class="muted">multi-scan file: using scan 1 of ${data.n_scans}</span>` : "");
   $("#spectrum-status").textContent = "loading overview…";
   await refreshWindow(data.mz_range[0], data.mz_range[1]);
@@ -224,6 +230,36 @@ function resetPostDeisotopeState() {
   $("#compare-status").textContent = "step 7 result appears here";
 }
 
+function resetFormulasState() {
+  // steps 6-7 depend on the charge sign (polarity)
+  S.ranked = [];
+  $("#formulas-summary").hidden = true;
+  $("#formulas-table tbody").innerHTML = "";
+  $("#formulas-count").textContent = "";
+  $("#csv-export-btn").disabled = true;
+  $("#c-formula").value = "";
+  $("#c-charge").value = 1;
+  $("#compare-plot").hidden = true;
+  const cmpEl = $("#compare-plot");
+  if (cmpEl.data) Plotly.purge(cmpEl);
+  $("#compare-status").textContent = "step 7 result appears here";
+}
+
+async function applyPolarity() {
+  const value = $("#f-polarity").value;
+  if (!S.session) return;
+  try {
+    const r = await api(`/api/sessions/${S.session}/polarity`,
+      { method: "POST", body: { polarity: value } });
+    S.polarity = r.polarity;
+    resetFormulasState();
+    toast(`polarity: ${value} (steps 6–7 use it for m/z → mass)`);
+  } catch (err) {
+    $("#f-polarity").value = S.polarity || "positive";
+    toast(err.message, true);
+  }
+}
+
 function resetDownstreamState() {
   S.ions = []; S.lastDeisotopeHash = null; S.ionProbs = {}; S.selectedIon = null; S.threshold = null;
   S.knee = null; S.ranked = null; S.window = null;
@@ -243,8 +279,10 @@ function resetDownstreamState() {
   $("#ions-count").textContent = "";
   $("#formulas-count").textContent = "";
   $("#csv-export-btn").disabled = true;
+  S.polarity = null;
   $("#f-ion").value = 0;
   $("#c-charge").value = 1;
+  $("#f-polarity").value = "positive";
   $("#compare-plot").hidden = true;
   const cmpEl = $("#compare-plot");
   if (cmpEl.data) Plotly.purge(cmpEl);
@@ -694,7 +732,7 @@ async function runFormulas() {
 
 function fillCompareCharge() {
   const ion = S.ions[+$("#f-ion").value];
-  if (ion) $("#c-charge").value = ion.charge;
+  if (ion) $("#c-charge").value = (S.polarity === "negative" ? -1 : 1) * ion.charge;
 }
 
 function renderFormulasTable() {
@@ -821,6 +859,7 @@ async function init() {
   };
   $("#f-add-row").onclick = () => addLimitRow();
   $("#csv-export-btn").onclick = exportCSV;
+  $("#f-polarity").onchange = applyPolarity;
 
   // element input validation
   $("#e-element").addEventListener("change", () => {
