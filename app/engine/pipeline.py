@@ -683,10 +683,19 @@ def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: Opti
         window["masses"], window["ints"],
         real_masses, real_ints, x_left, x_right,
     )
+    # Normalize row 1 to the experimental cluster base (max of the matched
+    # peak intensities, window max if nothing matched) so its silhouette can
+    # be compared 1:1 with the theoretical pattern (row 2, already at max 1).
+    cluster_base = float(real_ints.max()) if real_ints.size else 0.0
+    if not cluster_base > 0:
+        cluster_base = float(window["ints"].max())
+    if cluster_base > 0:
+        window["ints"] = window["ints"] / cluster_base
+        real_ints = real_ints / cluster_base
 
     fig = make_subplots(
         rows=2, cols=1,
-        subplot_titles=(f"Experimental  (ion {ion_id}, base peak m/z {ion['mz']:.4f}, z={target_charge:g})",
+        subplot_titles=(f"Experimental  (ion {ion_id}, base peak m/z {ion['mz']:.4f}, z={target_charge:g}, rel. to cluster base)",
                         f"Calculated  {formula.str_formula}"),
         vertical_spacing=0.12,
     )
@@ -694,13 +703,13 @@ def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: Opti
     fig.add_trace(
         go.Scatter(x=window["masses"].tolist(), y=window["ints"].tolist(),
                    mode="lines", name="Experimental", line=dict(color="#222222", width=1),
-                   hovertemplate="m/z %{x:.4f}<br>I %{y:.3g}<extra></extra>"),
+                   hovertemplate="m/z %{x:.4f}<br>rel. I %{y:.3g}<extra></extra>"),
         row=1, col=1,
     )
     fig.add_trace(
         go.Scatter(x=real_masses.tolist(), y=real_ints.tolist(), mode="markers",
                    name="Matched peaks", marker=dict(color="orange", size=7, line=dict(color="black", width=0.5)),
-                   hovertemplate="matched peak m/z %{x:.4f}<br>I %{y:.3g}<extra></extra>"),
+                   hovertemplate="matched peak m/z %{x:.4f}<br>rel. I %{y:.3g}<extra></extra>"),
         row=1, col=1,
     )
     # --- row 2: calculated isotope pattern (same line style as row 1) --- #
@@ -737,7 +746,7 @@ def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: Opti
     ]
     fig.update_xaxes(range=[x_left, x_right], row=1, col=1)
     fig.update_xaxes(range=[x_left, x_right], row=2, col=1)
-    fig.update_yaxes(title_text="Intensity", row=1, col=1)
+    fig.update_yaxes(title_text="Relative intensity", row=1, col=1)
     fig.update_yaxes(title_text="Relative intensity", range=[0, 1.15], row=2, col=1)
     fig.update_layout(
         template="plotly_white",
