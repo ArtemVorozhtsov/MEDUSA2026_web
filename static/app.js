@@ -751,6 +751,7 @@ async function init() {
   // upload
   const dz = $("#dropzone");
   dz.onclick = () => $("#upload-input").click();
+  $("#browse-btn").onclick = (e) => { e.stopPropagation(); $("#upload-input").click(); };
   ["dragover", "dragenter"].forEach((ev) =>
     dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add("dragover"); }));
   ["dragleave", "drop"].forEach((ev) =>
