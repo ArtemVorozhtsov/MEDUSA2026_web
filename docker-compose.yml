@@ -1,7 +1,11 @@
-# MEDUSA 2026 web service.
+# MEDUSA 2026 web service + .d converter sidecar.
 #
 #   docker compose up --build      # from this directory (medusa_web/)
 #   open http://localhost:8000
+#
+# The `converter` service (msconvert under wine) runs on-demand: the web service
+# drops a job file into the shared uploads volume; the converter picks it up.
+# First start pulls a multi-GB image (vendor-licensed Agilent drivers).
 #
 # The spectra folder (local path or NFS mount) is read-only mounted at /data/spectra.
 # Set SPECTRA_DIR in the shell or in a .env file next to this compose file, e.g.:
@@ -22,7 +26,8 @@ services:
       PORT: "8000"
       SPECTRA_DIR: /data/spectra
       UPLOAD_DIR: /data/uploads
-      MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-300}"
+      MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-1024}"
+      CONVERT_TIMEOUT_MIN: "${CONVERT_TIMEOUT_MIN:-60}"
       MAX_ACTIVE_SESSIONS: "${MAX_ACTIVE_SESSIONS:-32}"
       MAX_CONCURRENT_CPU_JOBS: "${MAX_CONCURRENT_CPU_JOBS:-2}"
       DELETE_UPLOADS_ON_SESSION_RESET: "${DELETE_UPLOADS_ON_SESSION_RESET:-false}"
@@ -36,6 +41,19 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+
+  converter:
+    # Agilent .d -> mzXML via Proteowizard msconvert under wine.
+    # Idle-watches the shared uploads volume; processes one job at a time.
+    image: chambm/pwiz-skyline-i-agree-to-the-vendor-licenses
+    container_name: medusa2026-converter
+    environment:
+      WINEDEBUG: "-all"
+    volumes:
+      - medusa_uploads:/data/uploads
+      - ./converter/entrypoint.sh:/entrypoint.sh:ro
+    command: ["sh", "/entrypoint.sh"]
+    restart: unless-stopped
 
 volumes:
   medusa_uploads:

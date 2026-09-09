@@ -50,6 +50,7 @@ class Session:
         "n_points", "mz_min", "mz_max", "n_scans", "load_time_s",
         "polarity", "polarity_source",
         "created_at", "last_access",
+        "status", "convert_output", "convert_error", "convert_started_at", "convert_file_id",
         "logs", "lock",
         # step 2: deisotoping
         "ion_id", "ion_info", "ion_charge", "last_deisotope_hash",
@@ -80,6 +81,13 @@ class Session:
         # "file" (read from mzXML), "default" (no tag in the file), "manual"
         self.polarity = "positive"
         self.polarity_source = "default"
+
+        # lifecycle: "loading" -> "ready" | ("converting" -> "ready"|"error")
+        self.status = "loading"
+        self.convert_output: Optional[str] = None
+        self.convert_error: Optional[str] = None
+        self.convert_started_at: Optional[float] = None
+        self.convert_file_id: Optional[str] = None
 
         self.created_at = time.time()
         self.last_access = self.created_at
@@ -127,9 +135,21 @@ class Session:
             self.polarity, self.polarity_source = detected, "file"
         else:
             self.polarity, self.polarity_source = "positive", "default"
+        self.status = "ready"
 
     def is_loaded(self) -> bool:
         return self.masses is not None
+
+    def mark_converting(self, output_path: str, file_id: str) -> None:
+        self.status = "converting"
+        self.convert_output = output_path
+        self.convert_file_id = file_id
+        self.convert_started_at = time.time()
+
+    def mark_convert_error(self, message: str) -> None:
+        self.status = "error"
+        self.convert_error = message
+        self.log("error", f".d conversion: {message}")
 
     def set_polarity(self, value: str) -> None:
         """Manual polarity override; invalidates formula results (mass from m/z)."""
@@ -151,6 +171,12 @@ class Session:
             "load_time_s": self.load_time_s,
             "polarity": self.polarity,
             "polarity_source": self.polarity_source,
+            "status": self.status,
+            "convert_elapsed_s": (
+                round(time.time() - self.convert_started_at, 1)
+                if self.status == "converting" and self.convert_started_at else None
+            ),
+            "convert_error": self.convert_error if self.status == "error" else None,
             "created_at": self.created_at,
             "n_ions": len(self.ion_info) if self.ion_id is not None else None,
             "element": self.elements_element,

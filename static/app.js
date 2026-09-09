@@ -8,6 +8,7 @@ const S = {
   session: null,          // session_id
   fileInfo: null,         // {file_name, n_points, mz_range, load_time_s}
   polarity: null,         // "positive" | "negative" (effective session polarity)
+  converting: false,     // .d upload being converted by the sidecar
   ions: [],               // [{ion_id, mz, charge, n_peaks, mz_min, mz_max}]
   lastDeisotopeHash: null,// params_hash of the last deisotoping (null = none yet)
   ionProbs: {},           // ion_id -> prob (selected element)
@@ -195,6 +196,21 @@ async function onSessionCreated(data) {
   $("#f-polarity").value = S.polarity;
   updateHeader();
   renderLogs(data.logs);
+  if (data.status === "converting") {
+    startConversionPolling(data.file_name);
+  } else {
+    await finalizeSession(data);
+  }
+}
+
+async function finalizeSession(data) {
+  S.fileInfo = {
+    file_name: data.file_name, n_points: data.n_points,
+    mz_range: data.mz_range, load_time_s: data.load_time_s,
+  };
+  S.polarity = data.polarity || S.polarity || "positive";
+  $("#f-polarity").value = S.polarity;
+  renderLogs(data.logs);
   $("#load-summary").hidden = false;
   $("#load-summary").innerHTML =
     `<b>${escapeHtml(data.file_name)}</b><br>` +
@@ -208,6 +224,55 @@ async function onSessionCreated(data) {
   $("#spectrum-status").textContent = "loading overview…";
   await refreshWindow(data.mz_range[0], data.mz_range[1]);
   $("#spectrum-status").textContent = windowStatusText();
+}
+
+// ------------------------------------------------------------------ //
+// .d conversion: poll the session until the sidecar finishes
+// ------------------------------------------------------------------ //
+let conversionTimer = null;
+
+function startConversionPolling(fileName) {
+  S.converting = true;
+  const sid = S.session;
+  const t0 = Date.now();
+  const renderTick = () => {
+    const s = Math.floor((Date.now() - t0) / 1000);
+    const mm = Math.floor(s / 60), ss = String(s % 60).padStart(2, "0");
+    $("#load-summary").hidden = false;
+    $("#load-summary").innerHTML =
+      `<b>${escapeHtml(fileName)}</b><br>` +
+      `converting .d archive → mzXML … <b>${mm}:${ss}</b><br>` +
+      `<span class="muted">msconvert (wine) — can take several minutes; steps unlock automatically</span>`;
+  };
+  renderTick();
+  conversionTimer = setInterval(async () => {
+    if (S.session !== sid) { stopConversionPolling(); return; }
+    try {
+      const meta = await api(`/api/sessions/${sid}`);
+      if (S.session !== sid) { stopConversionPolling(); return; }
+      if (meta.status === "ready") {
+        stopConversionPolling();
+        await finalizeSession(meta);
+      } else if (meta.status === "error") {
+        stopConversionPolling();
+        $("#load-summary").innerHTML =
+          `<b>${escapeHtml(meta.file_name)}</b><br>` +
+          `<span class="muted">conversion failed: ${escapeHtml(meta.convert_error || "unknown error")}</span><br>` +
+          `<span class="muted">delete the session and retry</span>`;
+        toast(`.d conversion failed: ${meta.convert_error || "unknown error"}`, true, 10000);
+      } else {
+        renderTick();
+      }
+    } catch (err) {
+      stopConversionPolling();
+      toast(err.message, true);
+    }
+  }, 5000);
+}
+
+function stopConversionPolling() {
+  S.converting = false;
+  if (conversionTimer) { clearInterval(conversionTimer); conversionTimer = null; }
 }
 
 function resetPostDeisotopeState() {
@@ -261,6 +326,7 @@ async function applyPolarity() {
 }
 
 function resetDownstreamState() {
+  stopConversionPolling();
   S.ions = []; S.lastDeisotopeHash = null; S.ionProbs = {}; S.selectedIon = null; S.threshold = null;
   S.knee = null; S.ranked = null; S.window = null;
   currentRange = null;
@@ -848,11 +914,11 @@ async function init() {
   }
 
   // runs
-  $$("[data-run='deiso']").forEach((b) => (b.onclick = () => S.session && runDeisotope()));
-  $$("[data-run='elements']").forEach((b) => (b.onclick = () => S.session && runElements()));
-  $$("[data-run='formulas']").forEach((b) => (b.onclick = () => S.session && runFormulas()));
-  $$("[data-run='compare']").forEach((b) => (b.onclick = () => S.session && runCompare()));
-  $("#apply-threshold-btn").onclick = () => S.session && applyThreshold();
+  $$("[data-run='deiso']").forEach((b) => (b.onclick = () => S.session && !S.converting && runDeisotope()));
+  $$("[data-run='elements']").forEach((b) => (b.onclick = () => S.session && !S.converting && runElements()));
+  $$("[data-run='formulas']").forEach((b) => (b.onclick = () => S.session && !S.converting && runFormulas()));
+  $$("[data-run='compare']").forEach((b) => (b.onclick = () => S.session && !S.converting && runCompare()));
+  $("#apply-threshold-btn").onclick = () => S.session && !S.converting && applyThreshold();
   $("#zoom-highlighted-btn").onclick = () => {
     if (S.threshold && S.threshold.mz_range)
       refreshWindow(S.threshold.mz_range[0] - 0.5, S.threshold.mz_range[1] + 0.5);

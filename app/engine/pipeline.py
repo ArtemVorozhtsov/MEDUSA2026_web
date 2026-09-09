@@ -50,6 +50,14 @@ logger = logging.getLogger("medusa_web.pipeline")
 N_ELEMENTS = 119
 
 
+def require_loaded(session: Session) -> None:
+    """Guard: heavy steps need a fully loaded session (for .d uploads: converted)."""
+    if session.status != "ready" or session.masses is None:
+        if session.status == "converting":
+            raise PipelineError("spectrum is still being converted from .d; wait and retry", 400)
+        raise PipelineError("spectrum is not loaded yet", 400)
+
+
 def _charge_sign(session: Session) -> int:
     """Sign of the ion charge for mass-based steps (6: target mass, 7: compare)."""
     return -1 if session.polarity == "negative" else 1
@@ -175,6 +183,7 @@ def center_representation(representation: np.ndarray, representation_mass: float
 # ---------------------------------------------------------------------- #
 def deisotope(store, session_id: str, params: DeisotopeParams, deisotoper: MlDeisotoper) -> Dict[str, Any]:
     session = store.get(session_id)
+    require_loaded(session)
     if not session.is_loaded():
         raise PipelineError("spectrum not loaded", 409)
     key = params_hash(params)
@@ -238,6 +247,7 @@ def deisotope(store, session_id: str, params: DeisotopeParams, deisotoper: MlDei
 # ---------------------------------------------------------------------- #
 def classify_elements(store, session_id: str, params: ElementsParams, transformer) -> Dict[str, Any]:
     session = store.get(session_id)
+    require_loaded(session)
     if session.ion_id is None:
         raise PipelineError("run deisotoping (step 2) first", 400)
     atomic = element_atomic_number(params.element)
@@ -373,6 +383,7 @@ def _classify_all_ions(session: Session, transformer) -> Tuple[np.ndarray, List[
 # ---------------------------------------------------------------------- #
 def knee(store, session_id: str, element_symbol: str) -> Dict[str, Any]:
     session = store.get(session_id)
+    require_loaded(session)
     if session.ion_probs is None:
         raise PipelineError("run element classification (step 3) first", 400)
     if session.ion_probs_for_deiso != session.last_deisotope_hash:
@@ -410,6 +421,7 @@ def knee(store, session_id: str, element_symbol: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------- #
 def apply_threshold(store, session_id: str, params: ThresholdParams) -> Dict[str, Any]:
     session = store.get(session_id)
+    require_loaded(session)
     if session.ion_probs is None or session.ion_id is None:
         raise PipelineError("run deisotoping (step 2) and elements (step 3) first", 400)
     if session.ion_probs_for_deiso != session.last_deisotope_hash:
@@ -469,6 +481,7 @@ def _formula_str(elements: List[str], counts) -> str:
 
 def formulas(store, session_id: str, params: FormulaParams) -> Dict[str, Any]:
     session = store.get(session_id)
+    require_loaded(session)
     if session.ion_id is None or not session.ion_info:
         raise PipelineError("run deisotoping (step 2) first", 400)
     if not (0 <= params.ion_id < len(session.ion_info)):
@@ -621,6 +634,7 @@ def _merge_matched_points(
 def compare(store, session_id: str, ion_id: int, formula_str: str, max_pts: Optional[int] = None,
             charge: Optional[float] = None) -> Dict[str, Any]:
     session = store.get(session_id)
+    require_loaded(session)
     if session.ion_id is None or not session.ion_info:
         raise PipelineError("run deisotoping (step 2) first", 400)
     if not (0 <= ion_id < len(session.ion_info)):

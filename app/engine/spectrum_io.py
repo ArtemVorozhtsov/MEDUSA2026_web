@@ -1,10 +1,13 @@
 """Spectrum loading (one scan) and server-folder file listing."""
 from __future__ import annotations
 
+import gzip
 import logging
 import os
 import re
+import shutil
 import time
+import zipfile
 from typing import Dict, List
 
 import numpy as np
@@ -26,18 +29,37 @@ _POLARITY_RE = re.compile(
 )
 
 
+def _read_file_prefix(path: str, limit: int) -> bytes:
+    """First ``limit`` bytes of XML, transparently following gzip (magic bytes)."""
+    try:
+        with open(path, "rb") as f:
+            if f.read(2) == b"\x1f\x8b":
+                f.seek(0)
+                buf = gzip.GzipFile(fileobj=f)
+                out = bytearray()
+                while len(out) < limit:
+                    chunk = buf.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    out.extend(chunk)
+                return bytes(out[:limit])
+            f.seek(0)
+            return f.read(limit)
+    except (OSError, EOFError):
+        return b""
+
+
 def detect_polarity(path: str) -> str:
     """Detect the ion polarity from the first ``<polarity>`` marker in the file.
 
     Handles the standard child-element form (``<scan><polarity>negative</polarity>``
-    or ``<instrumentConfiguration><polarity>\u2026``) and the attribute form
-    (``<scan polarity="+" \u2026>``) used by some exporters. Returns ``"positive"``,
+    or ``<instrumentConfiguration><polarity>…``) and the attribute form
+    (``<scan polarity="+" …>``) used by some exporters; gzip-compressed files
+    (``.mzXML.gz``) are followed transparently. Returns ``"positive"``,
     ``"negative"`` or ``"unknown"``.
     """
-    try:
-        with open(path, "rb") as f:
-            chunk = f.read(POLARITY_SCAN_BYTES)
-    except OSError:
+    chunk = _read_file_prefix(path, POLARITY_SCAN_BYTES)
+    if not chunk:
         return "unknown"
     m = _POLARITY_RE.search(chunk)
     if m is None:
@@ -48,6 +70,50 @@ def detect_polarity(path: str) -> str:
     if value in ("negative", "-", "-1"):
         return "negative"
     return "unknown"
+
+
+def extract_d_zip(zip_path: str, dest_dir: str, max_uncompressed_bytes: int) -> int:
+    """Extract an Agilent ``.d`` directory archive (uploaded as zip).
+
+    Guards against zip-slip paths and unbounded expansion. If the archive
+    wraps the ``.d`` folder as a single top-level directory (typical when a
+    user zips the folder itself), that level is stripped so the raw files
+    land directly under ``dest_dir``. Returns the number of files written.
+    """
+    if not zipfile.is_zipfile(zip_path):
+        raise ValueError("not a valid zip archive")
+    with zipfile.ZipFile(zip_path) as zf:
+        members = zf.infolist()
+        file_parts: List[List[str]] = []
+        total = 0
+        for info in members:
+            parts = info.filename.replace("\\", "/").split("/")
+            if info.filename.startswith(("/", "\\")) or ".." in parts:
+                raise ValueError(f"unsafe path in archive: {info.filename!r}")
+            if not info.is_dir():
+                total += info.file_size
+                file_parts.append(parts)
+        if total > max_uncompressed_bytes:
+            raise ValueError(
+                f"archive expands to {total} bytes (limit {max_uncompressed_bytes})")
+        strip_top = None
+        if file_parts and all(len(parts) > 1 for parts in file_parts):
+            tops = {parts[0] for parts in file_parts}
+            if len(tops) == 1:
+                strip_top = tops.pop()
+        os.makedirs(dest_dir, exist_ok=True)
+        count = 0
+        for info in members:
+            if info.is_dir():
+                continue
+            parts = info.filename.replace("\\", "/").split("/")
+            rel = parts[1:] if strip_top is not None else parts
+            target = os.path.join(dest_dir, *rel)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with zf.open(info) as src_file, open(target, "wb") as dst:
+                shutil.copyfileobj(src_file, dst)
+            count += 1
+        return count
 
 
 def list_spectra_files(root: str) -> List[Dict[str, object]]:

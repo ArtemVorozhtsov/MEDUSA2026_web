@@ -28,7 +28,10 @@
           <p>The MEDUSA 2026 pipeline in 7 steps, on a single FT-ICR scan.</p>
           <ol>
             <li><b>Load</b> — pick an mzXML from the server folder or upload your own
-               (only the first scan of the file is used).</li>
+               (mzXML, mzXML.gz, or a zipped Agilent <code>.d</code> folder — <code>*.d.zip</code>;
+               only the first scan is used). A <code>.d</code> archive is converted to mzXML
+               by a converter sidecar (msconvert under wine) — this can take several
+               minutes; the session becomes ready automatically.</li>
             <li><b>Deisotoping</b> — groups peaks into isotopic distributions and predicts
                the charge of every ion. Turn on <i>ions on spectrum</i> to mark each ion's
                peak top with a colored dot; click a dot, a peak, or a legend entry to select
@@ -72,9 +75,9 @@
         <div id="file-list" class="file-list"></div>
       </div>
       <div class="tab-pane" id="tab-upload" hidden>
-        <div id="dropzone">Drag &amp; drop mzXML here<br><span class="muted">or</span><br>
+        <div id="dropzone">Drag &amp; drop mzXML / .d.zip here<br><span class="muted">or</span><br>
           <button type="button" class="btn" id="browse-btn">Browse…</button>
-          <input id="upload-input" type="file" accept=".mzXML,.mzxml" hidden></div>
+          <input id="upload-input" type="file" accept=".mzXML,.mzxml,.d.zip,.zip" hidden></div>
         <div id="upload-progress" hidden>
           <div class="progress"><div id="upload-bar"></div></div>
           <span id="upload-label" class="muted"></span>

@@ -38,7 +38,8 @@ Docker-сервис, позволяющий прогнать полный 7-ша
 ```
 medusa_web/
 ├── Dockerfile                # self-contained image (python:3.9-slim)
-├── docker-compose.yml        # один сервис, порт ${PORT:-8000}, монтирование спектров
+├── docker-compose.yml        # два сервиса: web + converter (sidecar .d→mzXML),
+│                             #   порт ${PORT:-8000}, общий volume uploads
 ├── requirements.txt          # курируемый подмножество зависимостей (pinned)
 ├── .dockerignore             # build context = РОДИТЕЛЬСКИЙ каталог (см. §8)
 ├── Dockerfile.dockerignore   # -> symlink на .dockerignore (BuildKit требует имя <Dockerfile>.dockerignore)
@@ -53,7 +54,9 @@ medusa_web/
 │   ├── jobs.py               # CpuGate + run_cpu_job (ограничение параллельных CPU-шагов, 409)
 │   ├── errors.py             # иерархия ApiError + JSON-обработчики (включая catch-all)
 │   ├── engine/
-│   │   ├── spectrum_io.py    # Experiment() загрузка (1-й скан), листинг *.mzXML (глубина ≤3)
+│   │   ├── spectrum_io.py    # Experiment() загрузка (1-й скан, .gz-поддержка), листинг
+│   │   │                     #   *.mzXML, extract_d_zip (guard'ы: zip-slip, разжимание > лимита),
+│   │   │                     #   detect_polarity (в т.ч. сквозь gzip-магию)
 │   │   ├── downsample.py     # downsample_window (peak-preserving) и uniform_window (для compare)
 │   │   └── pipeline.py       # шаги 1–7 как чистые функции (store, session_id, params) -> dict
 │   └── api/
@@ -61,6 +64,9 @@ medusa_web/
 │       ├── sessions.py       # POST/GET/DELETE /api/sessions, GET /api/elements
 │       ├── analysis.py       # deisotope / elements / knee / threshold / formulas / presets
 │       └── figures.py        # GET .../spectrum (окно+слои), GET .../compare (plotly-fig)
+├── converter/
+│   └── entrypoint.sh         # watcher джобов .d→mzXML: wine msconvert, строго по одному
+│                             #   (протокол .req/.done на общем volume, см. §8.3, §12.17)
 ├── static/                   # фронтенд: один HTML-файл, vanilla JS, без build-шага
 │   ├── index.html            # вёрстка: левая колонка (шаги 1–7 + Help), центр (вьювер),
 │   │                         #   правая (таблица ионов, knee, формулы, лог)
@@ -78,8 +84,11 @@ medusa_web/
     ├── test_knee.py          # knee на синтетических векторах известных форм
     ├── test_pipeline_smoke.py# полный прогон на малом спектре + guard empty-peak_indices
     │                         #   + compare-фигура + сортировка knee
-    └── test_api.py           # TestClient: полный round-trip всех эндпоинтов, upload,
-                              #   ошибки, лимит сессий, JSON-ошибка на «шумовом» спектре
+    ├── test_api.py           # TestClient: полный round-trip всех эндпоинтов, upload,
+    │                         #   ошибки, лимит сессий, JSON-ошибка на «шумовом» спектре
+    └── test_d_conversion.py  # E2E-флоу .d.zip с симулированным converter-sidecar'ом:
+                              #   экстракция, .req, converting→ready, переиспользование
+                              #   результата, error/timeout-пути, .gz-upload, folder-запрет
 ```
 
 ### Что берётся из `MEDUSA2026/` (изменений там нет)
@@ -367,7 +376,19 @@ Dockerfile — symlink и селекторы игнора (`MEDUSA2026/mass_auto
   рестарт контейнера);
 - `restart: unless-stopped`;
 - `healthcheck` — GET /healthz (python urllib, start_period 60 с — модели
-  грузятся ~5–10 с, но на медленных хостах дольше).
+  грузятся ~5–10 с, но на медленных хостах дольше);
+- **`converter`** (service, `container_name: medusa2026-converter`) —
+  sidecar-конвертер Agilent `.d` → mzXML: image
+  `chambm/pwiz-skyline-i-agree-to-the-vendor-licenses` (msconvert под wine;
+  **image в несколько ГБ — первый `up` долго скачивается**, дальше кэш),
+  `WINEDEBUG=-all`, общий volume `medusa_uploads:/data/uploads`,
+  `command: ["sh","/entrypoint.sh"]` (смонтирован read-only из `./converter/`).
+  Протокол — file-watcher (см. §12.17): web кладёт `jobs/<file_id>.d.req`,
+  converter запускает
+  `wine msconvert <input> --mzXML --64 -g --zlib --outfile <name> -o <outdir>`
+  (фильтр сканов намеренно не ставится — по решению пользователя) и пишет
+  `jobs/<file_id>.done` (`exit=N` + хвост stderr) **до** удаления `.req`.
+  Джобы обрабатываются строго по одному (wine тяжёлый).
 
 Запуск с NFS: `SPECTRA_DIR=/mnt/nfs/medusa_spectra docker compose up --build`
 (или в `.env` рядом с compose-файлом).
@@ -384,10 +405,11 @@ Dockerfile — symlink и селекторы игнора (`MEDUSA2026/mass_auto
 | Метод и путь | Назначение | Ключевое в ответе |
 |---|---|---|
 | `GET /api/files` | список `*.mzXML` под `SPECTRA_DIR` (глубина ≤3) | `files: [{path, name, size}]` |
-| `POST /api/upload` | multipart, ≤ `MAX_UPLOAD_MB` | `file_id` (10 hex + исходное имя) |
-| `POST /api/sessions` | `{"source": "folder"|"upload", "path"|"file_id"}`; защита от path traversal (realpath-префикс) | `session_id, n_points, mz_range, n_scans, load_time_s, polarity, polarity_source, logs` |
+| `POST /api/upload` | multipart, ≤ `MAX_UPLOAD_MB` (дефолт **1024**); имена: `.mzXML`, `.mzXML.gz`, `.d.zip`, `.zip` (`.d` — директорный формат Agilent, загружается **zip-ом папки** из браузера) | `file_id` (10 hex + исходное имя) |
+| `POST /api/sessions` | `{"source": "folder"|"upload", "path"|"file_id"}`; защита от path traversal (realpath-префикс); folder — только `.mzXML` (`.d.zip` из папки сервера → 400); `.d.zip` upload: экстракция в `<file_id>.d/` + запуск конвертации — ответ сразу со `status: converting` | `session_id, status, n_points, mz_range, n_scans, load_time_s, polarity, polarity_source, logs, convert_error` |
+| — | **Жизненный цикл конвертации .d**: `status` = `loading` → `converting` → `ready`/`error`. Web опрашивает `jobs/<file_id>.d.done` на каждом `GET /api/sessions/{id}`; `exit=0` + наличие `<file_id>.d.mzXML.gz` → `load_spectrum` → `ready`. Повторная сессия на тот же `file_id` **переиспользует** уже сконвертированный файл (готовится сразу). Таймаут `CONVERT_TIMEOUT_MIN` (дефолт 60 мин) → `error: conversion timed out`. Пока не `ready` — шаги 2–7 отвечают 400 «still being converted from .d; wait and retry» | |
 | `POST /api/sessions/{id}/polarity` | `{"polarity": "positive"|"negative"}` — ручное переопределение знака заряда (инвалидирует кэш формул) | `polarity, polarity_source` ("manual") |
-| `GET /api/sessions/{id}` | метаданные + `completed_steps` | |
+| `GET /api/sessions/{id}` | метаданные + `completed_steps`; `status`, `convert_elapsed_s` (в converting), `convert_error` (в error) | |
 | `DELETE /api/sessions/{id}` | удалить (освобождает память) | |
 | `GET /api/sessions/{id}/spectrum?x0&x1&max_pts&layers` | окно ≤ max_pts; `layers=raw,ions,probs` | `masses, ints, ion_id?, prob?, decimated, n_in_window, full_range, window_range` |
 | `POST /api/sessions/{id}/deisotope` | DeisotopeParams (тело может быть `{}` — дефолты нотебука) | `n_ions, ions[], elapsed_s, params_hash` (всегда пересчёт, без кэша) |
@@ -451,7 +473,7 @@ row 1 — экспериментальное окно (черная линия; 
 
 ## 11. Тесты
 
-**41 тест**, зелёные и в dev-venv, и внутри image (≈80 с / ≈50 с).
+**53 теста**, зелёные и в dev-venv, и внутри image (≈35 с / ≈50 с).
 
 - `conftest.py`:
   - находит корень `mass_automation` (env `MASS_AUTOMATION_PATH` → sibling
@@ -474,6 +496,12 @@ row 1 — экспериментальное окно (черная линия; 
 - `test_api.py` — round-trip всех эндпоинтов через HTTP (upload и folder),
   ошибки (404/400/409), **JSON-ошибка на шумовом спектре** (дегенеративный
   вход ядра), лимит сессий.
+- `test_d_conversion.py` — 7 тестов на `.d`-флоу: полный цикл с **симулированным**
+  converter (zip с вложенной папкой, gzip-вывод, negative polarity из gz,
+  ready + deisotope 200, переиспользование результата второй сессией),
+  error-путь (exit=1 → stderr в `convert_error`, 400 на шагах), timeout
+  (backdate `convert_started_at`), `.d.zip` из folder → 400, неизвестное
+  расширение → 400, битый zip → 400 «extract», `.mzXML.gz` upload → ready.
 
 Запуск:
 
@@ -564,6 +592,27 @@ cd medusa_web && docker compose run --rm web pytest medusa_web/tests -q
     совместимы с нашим figure-JSON, но проверить нужно (API `Plotly.newPlot/
     react` и события `plotly_relayout/plotly_click` стабильны).
 
+17. **Конвертер .d — почему file-watcher, а не docker socket / exec.**
+    Web-контейнер не имеет доступа к docker-демон; `docker exec` в соседний
+    контейнер — хрупко. Протокол на общем volume (`medusa_uploads/jobs/`)
+    проще и observable из `docker logs`:
+    `web → <file_id>.d.req` (3 строки: `input=/abs/<file_id>.d`,
+    `outfile=<file_id>.d.mzXML`, `outdir=/abs`),
+    `converter → <file_id>.d.done` (`exit=N` + 20 строк stderr) **до**
+    удаления `.req` (крах между — повторный запуск джоба, не потеря).
+    Обработка строго последовательная: wine + Agilent-драйверы тяжёлые,
+    параллелизм не даёт выигрыша, а ест память. `.d` — это **каталог**
+    (analysis.baf + idx + sqlite), поэтому браузер шлёт **zip папки**;
+    `extract_d_zip` снимает единственный top-level-каталог архива (zip
+    «папки» и zip «содержимого» работают одинаково). Вывод — gzip-mzXML
+    (`-g --zlib`), pyopenms читает `.gz` напрямую; повторный session-запрос на
+    тот же `file_id` переиспользует файл без нового джоба. Флаг
+    `--filter="scan=1"` намеренно не ставится (решение пользователя). Image
+    `chambm/pwiz-skyline-i-agree-to-the-vendor-licenses` — vendor-licensed
+    (Agilent-драйверы под wine), **несколько ГБ**, первый старт долгий;
+    `WINEDEBUG=-all` глушит wine-шум в логах. Таймаут — `CONVERT_TIMEOUT_MIN`
+    (дефолт 60): web видит, что `.done` нет, а время истекло → `status=error`
+    (позднее финишировавший джоб просто не подхватится).
 16. **`check_presence` — поведение ядра (изменено для этого проекта,
     MEDUSA2026 commit `04c7434`)**: окно поиска каждого изотопического пика
     привязано к **теоретической** массе + бегущий сдвиг (медиана
@@ -592,7 +641,7 @@ cd medusa_web && docker compose run --rm web pytest medusa_web/tests -q
 | Formulas (ir_system, топ-ион) | ~2–3 с (локо-валидация 30 кандидатов) |
 | Полная цепочка 1→7 (E2E, без времени пользователя) | **~12–15 с** (лимит ~2 мин) |
 | Запрос окна спектра (любое) | ≤2500 точек; <300 мс (хуже 220 мс на холодном кэше) |
-| Тесты: venv / в image | ~80 с / ~50 с (43 теста) |
+| Тесты: venv / в image | ~35 с / ~50 с (53 теста) |
 
 Память сессии на 8M-спектр: ~2×8M×8 Б (float64 masses/ints) + `ion_id`
 (int32) + `ion_probs` — порядок сотен МБ; при 8 сессиях — единицы ГБ.
@@ -617,10 +666,12 @@ SPECTRA_DIR=/mnt/nfs/medusa_spectra docker compose up -d   # NFS-папка
 docker compose run --rm web pytest medusa_web/tests -q      # тесты в image
 curl -s localhost:8000/healthz                  # модели: cgb/transformer
 docker logs -f medusa2026-web                   # логи (загрузка моделей, 409, warnings)
+docker logs -f medusa2026-converter             # джобы .d (msconvert)
 docker compose down                             # стоп
 ```
 
-Полезные env (compose): `PORT`, `SPECTRA_DIR`, `MAX_UPLOAD_MB`,
-`MAX_ACTIVE_SESSIONS`, `MAX_CONCURRENT_CPU_JOBS`, `DELETE_UPLOADS_ON_SESSION_RESET`;
+Полезные env (compose): `PORT`, `SPECTRA_DIR`, `MAX_UPLOAD_MB` (дефолт 1024),
+`CONVERT_TIMEOUT_MIN` (дефолт 60), `MAX_ACTIVE_SESSIONS`,
+`MAX_CONCURRENT_CPU_JOBS`, `DELETE_UPLOADS_ON_SESSION_RESET`;
 внутри image:
 `CGB_MODEL`, `TRANSFORMER_CKPT` (override путей моделей).

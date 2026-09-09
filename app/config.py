@@ -36,6 +36,7 @@ class Settings:
     max_active_sessions: int
     max_concurrent_cpu_jobs: int
     delete_uploads_on_session_reset: bool
+    convert_timeout_min: int
     port: int
     cgb_model: str
     transformer_ckpt: str
@@ -60,10 +61,11 @@ def get_settings() -> Settings:
     return Settings(
         spectra_dir=os.environ.get("SPECTRA_DIR", "/data/spectra"),
         upload_dir=os.environ.get("UPLOAD_DIR", "/data/uploads"),
-        max_upload_mb=_env_int("MAX_UPLOAD_MB", 300),
+        max_upload_mb=_env_int("MAX_UPLOAD_MB", 1024),
         max_active_sessions=_env_int("MAX_ACTIVE_SESSIONS", 8),
         max_concurrent_cpu_jobs=_env_int("MAX_CONCURRENT_CPU_JOBS", 2),
         delete_uploads_on_session_reset=_env_bool("DELETE_UPLOADS_ON_SESSION_RESET", False),
+        convert_timeout_min=_env_int("CONVERT_TIMEOUT_MIN", 60),
         port=_env_int("PORT", 8000),
         cgb_model=_default_model("CGB_MODEL", "MEDUSA2026/data/models/charge1_big_optuna150.pkl"),
         transformer_ckpt=_default_model("TRANSFORMER_CKPT", "MEDUSA2026/nn_models/transfomer_classifier.ckpt"),
