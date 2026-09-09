@@ -16,13 +16,17 @@ JOBS_DIR="${JOBS_DIR:-/data/uploads/jobs}"
 export WINEDEBUG=-all
 
 mkdir -p "$JOBS_DIR"
+# web runs as unprivileged uid 1000 and writes .req files here: make the
+# directory world-writable regardless of which container created it first.
+chmod 777 "$JOBS_DIR" 2>/dev/null || true
 echo "[converter] watching $JOBS_DIR"
 
 while true; do
     for req in "$JOBS_DIR"/*.d.req; do
         [ -e "$req" ] || continue
         id="${req##*/}"
-        id="${id%.d.req}"
+        # strip only .req: markers stay named <file_id>.d.done / <file_id>.d.log
+        id="${id%.req}"
 
         input=$(grep '^input=' "$req" | cut -d= -f2-)
         outfile=$(grep '^outfile=' "$req" | cut -d= -f2-)
