@@ -375,6 +375,14 @@ function windowStatusText() {
   return parts.join(" · ");
 }
 
+// ~2 points per rendered pixel: small screens keep the 2500 default,
+// large displays go up to the server cap (5000) so zoomed-out views stay smooth.
+function viewerMaxPts() {
+  const el = $("#spectrum-plot");
+  const width = el && el.clientWidth ? el.clientWidth : 1000;
+  return Math.max(2500, Math.min(5000, Math.round(width * 2)));
+}
+
 async function refreshWindow(x0, x1) {
   if (!S.session) return;
   const layers = ["raw"];
@@ -382,7 +390,7 @@ async function refreshWindow(x0, x1) {
   if (S.threshold) layers.push("probs");
   try {
     const w = await api(
-      `/api/sessions/${S.session}/spectrum?x0=${x0}&x1=${x1}&max_pts=2500&layers=${layers.join(",")}`
+      `/api/sessions/${S.session}/spectrum?x0=${x0}&x1=${x1}&max_pts=${viewerMaxPts()}&layers=${layers.join(",")}`
     );
     S.window = w;
     currentRange = [x0, x1];
@@ -492,6 +500,22 @@ function onRelayout( eventData ) {
   clearTimeout(zoomTimer);
   zoomTimer = setTimeout(() => refreshWindow(range[0], range[1]), 150);
 }
+
+// on window resize re-decimate the current range if the plot width moved by >10%
+// (max_pts is width-dependent); cheap no-op otherwise
+let resizeTimer = null;
+let lastPlotWidth = 0;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    const el = $("#spectrum-plot");
+    const width = el && el.clientWidth ? el.clientWidth : 0;
+    if (!width || !S.window || !currentRange) return;
+    const changed = lastPlotWidth && Math.abs(width - lastPlotWidth) / lastPlotWidth > 0.1;
+    lastPlotWidth = width;
+    if (changed) refreshWindow(currentRange[0], currentRange[1]);
+  }, 400);
+});
 
 function onPlotClick(eventData) {
   if (!eventData || !eventData.length || !S.window) return;
