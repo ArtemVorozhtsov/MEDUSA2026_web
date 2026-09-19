@@ -74,7 +74,7 @@ plan for a few minutes on a fast line. After that the image is cached.
 | `PORT` | `8000` | host port published by compose |
 | `SPECTRA_DIR` | `/data/spectra` | folder listed in the UI (mounted read-only) |
 | `UPLOAD_DIR` | `/data/uploads` | where uploads are stored |
-| `MAX_UPLOAD_MB` | `300` | upload size limit (413 above it) |
+| `MAX_UPLOAD_MB` | `1024` | upload size limit (413 above it) |
 | `MAX_ACTIVE_SESSIONS` | `8` | 409 when reached — delete a session first |
 | `MAX_CONCURRENT_CPU_JOBS` | `2` | heavy steps in parallel; others get `409 job slot busy, retry` |
 | `CGB_MODEL` | baked `/app/models/charge1_big_optuna150.pkl` | deisotoper (CatBoost) path |
@@ -130,7 +130,7 @@ endpoint (upload + folder sources, errors, session limit).
 
 - **Port in use** — run on another port: `PORT=8010 docker compose up --build`
   (the in-container port stays 8000).
-- **"upload too large: limit is 300 MB"** — raise `MAX_UPLOAD_MB`.
+- **"upload too large: limit is 1024 MB"** — raise `MAX_UPLOAD_MB`.
 - **`job slot busy, retry` (409)** — another heavy step is running
   (`MAX_CONCURRENT_CPU_JOBS`); wait and press *Run* again, or raise the limit.
 - **"max active sessions reached" (409)** — press *New session* / delete an
