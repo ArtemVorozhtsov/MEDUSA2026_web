@@ -71,10 +71,10 @@ class DeisotopeParams:
     algorithm: str = "adaptive"
     z_max: int = 3
     min_distance: float = 0.01
-    threshold: float = 0.15
+    threshold: float = 0.2
     delta: float = 0.007
     n1: float = 2.0
-    n2: float = 6.0
+    n2: float = 7.0
 
 
 @dataclass(frozen=True)
@@ -181,6 +181,26 @@ def center_representation(representation: np.ndarray, representation_mass: float
 # ---------------------------------------------------------------------- #
 # Step 2: deisotoping
 # ---------------------------------------------------------------------- #
+_ADAPTIVE_BLOCK_WIDTH = 15.0  # core default (find_spec_peaks, b70448d)
+_ADAPTIVE_MIN_BLOCKS = 12     # core fits a degree-10 polynomial: needs >= 11 blocks
+
+
+def _adaptive_block_width(mz_min: float, mz_max: float) -> Optional[float]:
+    """Span-adjusted block_width for the core's per-spectrum adaptive envelope.
+
+    ``adaptive_baseline`` splits the m/z range into ``block_width``-Da blocks and
+    fits a degree-10 polynomial to the per-block quantiles. For a range narrower
+    than one core block the fit degenerates (polyfit scale collapses to 0 and
+    SVD fails to converge); fewer than degree+1 blocks make it rank-deficient.
+    Shrink block_width for narrow spectra so at least ``_ADAPTIVE_MIN_BLOCKS``
+    full-rank blocks remain; wide spectra keep the core default.
+    """
+    span = mz_max - mz_min
+    if span <= 0:
+        return None
+    return min(_ADAPTIVE_BLOCK_WIDTH, span / _ADAPTIVE_MIN_BLOCKS)
+
+
 def deisotope(store, session_id: str, params: DeisotopeParams, deisotoper: MlDeisotoper) -> Dict[str, Any]:
     session = store.get(session_id)
     require_loaded(session)
@@ -191,7 +211,8 @@ def deisotope(store, session_id: str, params: DeisotopeParams, deisotoper: MlDei
     with session.lock:
         t0 = time.time()
         try:
-            labels, charge_states = deisotoper(
+            block_width = _adaptive_block_width(session.mz_min, session.mz_max)
+            call_kwargs: Dict[str, Any] = dict(
                 spectrum=session.spectrum,
                 algorithm=params.algorithm,
                 z_max=params.z_max,
@@ -201,6 +222,9 @@ def deisotope(store, session_id: str, params: DeisotopeParams, deisotoper: MlDei
                 n1=params.n1,
                 n2=params.n2,
             )
+            if block_width is not None:
+                call_kwargs["block_width"] = block_width
+            labels, charge_states = deisotoper(**call_kwargs)
         except Exception as exc:  # noqa: BLE001 - core peak-finding chokes on some spectra
             session.log("warning", f"deisotoping failed: {exc}")
             raise PipelineError(f"deisotoping failed: {exc}", 400)

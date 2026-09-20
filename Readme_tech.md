@@ -96,7 +96,7 @@ medusa_web/
 | Что | Откуда | Как используется |
 |---|---|---|
 | `mass_automation` (пакет) | `MEDUSA2026/mass_automation` | ядро: `Experiment/Spectrum`, `MlDeisotoper`, `TransformerModel`, `formula_generator_parallel`, `check_presence`, `Formula`, `ELEMENT_DICT`; **для этого проекта patched**: `check_formula.py` (якорные окна пиков) + `plot.py` (см. §12 п.16) |
-| CGB-модель деизотопирования | `MEDUSA2026/data/models/charge1_big_optuna150.pkl` (28.5 МБ) | запекается в image, `ENV CGB_MODEL` |
+| CGB-модель деизотопирования | `MEDUSA2026/data/models/charge1_optuna150.pkl` (5.1 МБ; CatBoost, 509k пар, Optuna 150 trials, CV AUC 0.9836) | запекается в image, `ENV CGB_MODEL` |
 | Чекпоинт Transformer | `MEDUSA2026/nn_models/transfomer_classifier.ckpt` (57.6 МБ) | запекается в image, `ENV TRANSFORMER_CKPT` |
 | Тестовые данные | `MEDUSA2026/data/formula_determination_test/` | **срезы** (первые 8 сэмплов) скопированы в `tests/data/` — image не зависит от оригинальных 107 МБ |
 | Реальные спектры | `MEDUSA2026/spectra/` (и любой NFS) | монтируются read-only в `/data/spectra` через `SPECTRA_DIR` |
@@ -225,7 +225,7 @@ session (app/state.py)  — массы/интенсивности, ion_id, ion_p
 | Шаг | Функция | Что делает | Ключевые детали |
 |---|---|---|---|
 | 1 | `load_spectrum` | `Experiment()` → скан 0 → `masses`/`ints` float64 + `Spectrum`; `detect_polarity` по префиксу файла | ~1.5 с на 8M точек |
-| 2 | `deisotope` | `MlDeisotoper().load(CGB_MODEL)(spectrum, algorithm, z_max, min_distance, threshold, delta, n1, n2)` | дефолты = нотебук: `adaptive, z_max=3, 0.01, 0.15, 0.007, n1=2, n2=6`; на выходе `ion_id` на точку (-1 = шум) + `ion_info` (m/z **base peak = argmax интенсивности**, заряд = первый unique-z по точкам (как в ядре), n_peaks); шаг **не кэшируется** — быстрый, каждый Run пересчитывает |
+| 2 | `deisotope` | `MlDeisotoper().load(CGB_MODEL)(spectrum, algorithm, z_max, min_distance, threshold, delta, n1, n2)` | дефолты: `adaptive, z_max=3, 0.01, 0.2, 0.007, n1=2, n2=7` (threshold — grid-tuned 0.2 для новой модели; n2=7 — универсальная Optuna-конфигурация per-spectrum adaptive); на выходе `ion_id` на точку (-1 = шум) + `ion_info` (m/z **base peak = argmax интенсивности**, заряд = первый unique-z по точкам (как в ядре), n_peaks); шаг **не кэшируется** — быстрый, каждый Run пересчитывает |
 | 3 | `classify_elements` | по каждому иону: `RealIsotopicDistribution.get_representation(f=np.mean, mode="middle", length=101)` → `center_representation(repr, mass, charge_mean)` → нормировка на глобальный max → forward Transformer (батч (n_ions, seq, 100)) → sigmoid | **input_dim=100** (get_representation length=101 → vectorize отбрасывает центр → n_bins−1=100), **output_dim=119** = `N_ELEMENTS`; столбец c ↔ атомный номер c+1 (`ELEMENT_DICT` — 118 имён, у модели класс на один больше); каждый ион в try/except — см. §6 |
 | 4 | `knee` | `find_knee_threshold_numpy` (локальная копия утилиты нотебука — без import-path coupling в `research/`): точка, дальше всех от хорды (0,max)→(N,min) **в отсортированном по убыванию** массиве | API возвращает `probs` **отсортированными desc**; `knee_idx` — позиция в отсортированном массиве (чарт в UI рисует ровно это) |
 | 5 | `apply_threshold` | `source=auto` (knee) или `manual` (manual_value∈(0,1)); строит `point_probs` (на точку через ion_id) | результат — слой подсветки в вьювере («красные точки») |
@@ -633,6 +633,26 @@ cd medusa_web && docker compose run --rm web pytest medusa_web/tests -q
     вставляются в линию (`_merge_matched_points`), и кружок лежит на линии
     по построению. Метрики (Δ, косинус, matched %) считаются на этих же
     точках — как в нотебуке.
+18. **Per-spectrum adaptive peak picker (ядро, коммиты `b70448d`/`b27c33e`).**
+    Старый adaptive — фиксированный полином базовой линии (константы COEFS +
+    `mass_range_for_baseline (1450,1650)`, квантиль 0.9995) — заменён на
+    `adaptive_baseline()`: per-spectrum огибающая шума из блок-робастных
+    квантилей (block_width=15) + полином Cauchy-IRLS (degree=10) +
+    MAD-масштаб (envelope_quantile=0.95, cap_sigma=8). Конфигурация
+    универсальная (instrument-agnostic) и задаётся дефолтами ядра — web их
+    не передаёт. Сигнатура `find_spec_peaks` изменилась: убраны
+    `quantile_for_baseline`/`mass_range_for_baseline`, добавлены
+    `degree`/`block_width`/`envelope_quantile`/`cap_sigma`; дефолт `n2` 6→7.
+    Web вызывает `find_spec_peaks` с `algorithm, z_max, min_distance,
+    threshold, delta, n1, n2` — совместимо. Новые канонические дефолты
+    пайплайна: threshold=0.2 (grid-tuned по DR@0.25/0.5/0.75 для новой
+    модели), n2=7. **Web-гейрд на узкие окна** (`_adaptive_block_width`
+    в `pipeline.py::deisotope`): ядро деградирует при диапазоне m/z уже
+    одного блока (15 Да) — один блок → `polyfit` с вырожденным масштабом →
+    `SVD did not converge` (краш на тест-фикстурах 13 Да). Web передаёт
+    `block_width = min(15, span/12)`, гарантируя ≥12 полноранговых блоков
+    для полинома 10-й степени; для широких спектров — дефолт ядра.
+    В самом ядре guard не ставился (правило: не менять MEDUSA2026/).
 
 ---
 
@@ -643,8 +663,8 @@ cd medusa_web && docker compose run --rm web pytest medusa_web/tests -q
 | `docker compose build` (с нуля, pip+IsoSpecPy) | ~4–5 мин |
 | Старт контейнера + загрузка моделей | ~5–10 с |
 | Загрузка 8M-спектра (112 МБ) | ~1.5 с |
-| Деизотопирование всего спектра (adaptive, z_max=3) | ~0.5–1 с (57 ионов) |
-| Элементная классификация (57 ионов, CPU) | ~1–2 с |
+| Деизотопирование всего спектра (adaptive, z_max=3) | ~0.5 с (44 иона; новое ядро + charge1_optuna150) |
+| Элементная классификация (44 иона, CPU) | ~1 с |
 | Formulas (ir_system, топ-ион) | ~2–3 с (локо-валидация 30 кандидатов) |
 | Полная цепочка 1→7 (E2E, без времени пользователя) | **~12–15 с** (лимит ~2 мин) |
 | Запрос окна спектра (любое) | 2500–5000 точек (по ширине плота); <300 мс (хуже 220 мс на холодном кэше) |

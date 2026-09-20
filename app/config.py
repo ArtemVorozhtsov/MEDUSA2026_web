@@ -67,7 +67,7 @@ def get_settings() -> Settings:
         delete_uploads_on_session_reset=_env_bool("DELETE_UPLOADS_ON_SESSION_RESET", False),
         convert_timeout_min=_env_int("CONVERT_TIMEOUT_MIN", 60),
         port=_env_int("PORT", 8000),
-        cgb_model=_default_model("CGB_MODEL", "MEDUSA2026/data/models/charge1_big_optuna150.pkl"),
+        cgb_model=_default_model("CGB_MODEL", "MEDUSA2026/data/models/charge1_optuna150.pkl"),
         transformer_ckpt=_default_model("TRANSFORMER_CKPT", "MEDUSA2026/nn_models/transfomer_classifier.ckpt"),
     )
 

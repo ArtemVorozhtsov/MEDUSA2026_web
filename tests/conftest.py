@@ -58,7 +58,7 @@ def _default_model(env_name: str, repo_rel: str) -> str:
     return str(MA_ROOT / repo_rel)
 
 
-os.environ.setdefault("CGB_MODEL", _default_model("CGB_MODEL", "data/models/charge1_big_optuna150.pkl"))
+os.environ.setdefault("CGB_MODEL", _default_model("CGB_MODEL", "data/models/charge1_optuna150.pkl"))
 os.environ.setdefault("TRANSFORMER_CKPT", _default_model("TRANSFORMER_CKPT", "nn_models/transfomer_classifier.ckpt"))
 os.environ.setdefault("SPECTRA_DIR", str(DATA_DIR))
 os.environ.setdefault("UPLOAD_DIR", str(DATA_DIR))

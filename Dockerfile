@@ -77,12 +77,12 @@ COPY medusa_web/tests /app/medusa_web/tests
 COPY MEDUSA2026/mass_automation /app/mass_automation
 
 # 4) Pre-trained models, baked into the image (overridable via CGB_MODEL / TRANSFORMER_CKPT)
-COPY MEDUSA2026/data/models/charge1_big_optuna150.pkl /app/models/charge1_big_optuna150.pkl
+COPY MEDUSA2026/data/models/charge1_optuna150.pkl /app/models/charge1_optuna150.pkl
 COPY MEDUSA2026/nn_models/transfomer_classifier.ckpt /app/models/transfomer_classifier.ckpt
 
 ENV PYTHONPATH=/app:/app/medusa_web \
     MASS_AUTOMATION_PATH=/app \
-    CGB_MODEL=/app/models/charge1_big_optuna150.pkl \
+    CGB_MODEL=/app/models/charge1_optuna150.pkl \
     TRANSFORMER_CKPT=/app/models/transfomer_classifier.ckpt \
     SPECTRA_DIR=/data/spectra \
     UPLOAD_DIR=/data/uploads \

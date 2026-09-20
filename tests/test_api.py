@@ -91,7 +91,7 @@ def test_full_chain(api_client, session, gt_formulas):
     # --- step 2: deisotope ---
     r = c.post(f"/api/sessions/{sid}/deisotope", json={
         "algorithm": "adaptive", "z_max": 3, "min_distance": 0.01,
-        "threshold": 0.15, "delta": 0.007, "n1": 2, "n2": 6,
+        "threshold": 0.2, "delta": 0.007, "n1": 2, "n2": 7,
     })
     assert r.status_code == 200, r.text
     deiso = r.json()
@@ -101,7 +101,7 @@ def test_full_chain(api_client, session, gt_formulas):
     # deisotoping is uncached: a re-run recomputes the same ion set
     r2 = c.post(f"/api/sessions/{sid}/deisotope", json={
         "algorithm": "adaptive", "z_max": 3, "min_distance": 0.01,
-        "threshold": 0.15, "delta": 0.007, "n1": 2, "n2": 6,
+        "threshold": 0.2, "delta": 0.007, "n1": 2, "n2": 7,
     })
     assert r2.json()["n_ions"] == deiso["n_ions"]
 
@@ -288,8 +288,8 @@ def test_redeisotope_invalidates_downstream(api_client, spectrum_file):
     sid = r.json()["session_id"]
 
     def deiso(**overrides):
-        body = {"algorithm": "adaptive", "z_max": 3, "threshold": 0.15,
-                "delta": 0.007, "min_distance": 0.01, "n1": 2, "n2": 6}
+        body = {"algorithm": "adaptive", "z_max": 3, "threshold": 0.2,
+                "delta": 0.007, "min_distance": 0.01, "n1": 2, "n2": 7}
         body.update(overrides)
         resp = c.post(f"/api/sessions/{sid}/deisotope", json=body)
         assert resp.status_code == 200, resp.text
@@ -371,14 +371,14 @@ def test_error_handling(api_client, session, spectrum_file):
 
 
 def test_unprocessable_spectrum_returns_json_error(api_client):
-    """Core peak-finding chokes on degenerate (pure-noise) spectra; the API
+    """Core peak-finding chokes on degenerate (constant-m/z) spectra; the API
     must still answer with a JSON error, never a plain 500 (API contract)."""
     import numpy as np
 
     from app.config import get_settings
 
     rng = np.random.default_rng(7)
-    masses = np.linspace(100.0, 500.0, 5000)
+    masses = np.full(5000, 300.0)
     ints = np.abs(rng.normal(1e5, 1e4, masses.size))
     path = Path(get_settings().spectra_dir) / "noise.mzXML"
     write_mzxml(path, masses, ints)
@@ -435,7 +435,7 @@ def test_polarity_detection_override_and_negative_charge(api_client, small_spect
     api_client.post(f"/api/sessions/{sid}/polarity", json={"polarity": "negative"})
     r = api_client.post(f"/api/sessions/{sid}/deisotope", json={
         "algorithm": "adaptive", "z_max": 3, "min_distance": 0.01,
-        "threshold": 0.15, "delta": 0.007, "n1": 2, "n2": 6,
+        "threshold": 0.2, "delta": 0.007, "n1": 2, "n2": 7,
     })
     assert r.status_code == 200, r.text
     deiso = r.json()
