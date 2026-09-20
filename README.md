@@ -84,7 +84,7 @@ plan for a few minutes on a fast line. After that the image is cached.
 
 1. **Load**: *Server files* tab → click a file (or drop an mzXML onto *Upload*).
    The header shows session id + file name; the viewer shows a decimated
-   overview (≤ 2500 points per response — the 8 M-point scan stays smooth).
+   overview (2500–5000 points per response, scaled to plot width — the 8 M-point scan stays smooth).
 2. **Deisotoping**: defaults are the notebook values (`adaptive`, z_max 3,
    threshold 0.15, delta 0.007, min_distance 0.01, n1 2, n2 6) → *Run*.
    Toggle *ions on spectrum* for per-ion coloring; the legend lists
