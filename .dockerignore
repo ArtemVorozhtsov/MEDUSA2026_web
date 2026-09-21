@@ -22,7 +22,7 @@ MEDUSA2026/mass_automation/**/__pycache__
 MEDUSA2026/data/*
 !MEDUSA2026/data/models
 MEDUSA2026/data/models/*
-!MEDUSA2026/data/models/charge1_big_optuna150.pkl
+!MEDUSA2026/data/models/charge1_optuna150.pkl
 
 MEDUSA2026/nn_models/*
 !MEDUSA2026/nn_models/transfomer_classifier.ckpt
